@@ -64,6 +64,18 @@ constructs channels with `id: problemId` — nothing enforces it at the storage
 boundary, so any future caller minting its own channel id silently splits
 read and write paths.
 
+## 5. Concurrent first registrations in one MCP session race for the default
+
+Two `register`/`quick_join` calls running concurrently in one session both
+resolve a null session default before either result is captured, so both mint
+agents; only the first-completed becomes the implicit identity, and the other
+caller's IMPLICIT calls silently act as it (explicit `agentId` calls work for
+both — every registration lands in the session registry). Pre-dates the
+quick_join reuse fix; surfaced by Greptile's concurrent repro on that PR.
+
+**Fix direction**: serialize registration per sessionKey in the tool handler
+(an async mutex around resolve-register-capture).
+
 ## Design note, not a defect: consensus markers are immutable
 
 `consensus.ts` exposes only mark/endorse/list — no update, delete or
