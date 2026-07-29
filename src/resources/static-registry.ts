@@ -57,6 +57,13 @@ export const STATIC_RESOURCES: StaticResourceDef[] = [
     mimeType: "application/json",
   },
   {
+    key: "gateway-operations",
+    name: "Code Mode Gateway Operations Catalog",
+    uri: "thoughtbox://gateway/operations",
+    description: "Complete catalog of operations available through the Code Mode gateway, grouped by tb SDK module (hub, thought, session, vars)",
+    mimeType: "application/json",
+  },
+  {
     key: "patterns-cookbook",
     name: "Thoughtbox Patterns Cookbook",
     uri: "thoughtbox://patterns-cookbook",
@@ -92,6 +99,13 @@ export const RESOURCE_TEMPLATES: ResourceTemplateDef[] = [
     name: "Session Operation Detail",
     uriTemplate: "thoughtbox://session/operations/{op}",
     description: "Individual session operation schema and examples",
+    mimeType: "application/json",
+  },
+  {
+    key: "gateway-operation",
+    name: "Gateway Operation Schema",
+    uriTemplate: "thoughtbox://gateway/operations/{op}",
+    description: "Individual operation schema from the Code Mode gateway catalog, looked up by name across tb SDK modules",
     mimeType: "application/json",
   },
   {

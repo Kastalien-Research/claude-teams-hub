@@ -145,13 +145,13 @@ describe("static catalog single-registry (drift guard)", () => {
     );
   });
 
-  it("search-tool description lists every operations module incl. claims", () => {
+  it("search-tool description lists every operations module incl. hub", () => {
     const catalog = buildSearchCatalog();
     // The SEARCH_TOOL description enumerates modules; keep it in sync with
     // the real catalog keys.
     for (const moduleName of Object.keys(catalog.operations)) {
       expect(SEARCH_TOOL.description).toContain(moduleName);
     }
-    expect(Object.keys(catalog.operations)).toContain("claims");
+    expect(Object.keys(catalog.operations)).toContain("hub");
   });
 });

@@ -5,14 +5,8 @@ import { join } from "node:path";
 import { ExecuteTool, type ExecuteToolDeps } from "../execute-tool.js";
 import { ThoughtTool } from "../../thought/tool.js";
 import { SessionTool } from "../../sessions/tool.js";
-import { KnowledgeTool } from "../../knowledge/tool.js";
-import { NotebookTool } from "../../notebook/tool.js";
-import { TheseusTool, UlyssesTool, InMemoryProtocolHandler } from "../../protocol/index.js";
-import { ObservabilityGatewayHandler } from "../../observability/index.js";
 import { ThoughtHandler } from "../../thought-handler.js";
 import { SessionHandler } from "../../sessions/index.js";
-import { KnowledgeHandler, FileSystemKnowledgeStorage } from "../../knowledge/index.js";
-import { NotebookHandler } from "../../notebook/index.js";
 import { InMemoryStorage } from "../../persistence/index.js";
 import { createFileSystemHubStorage } from "../../hub/hub-storage-fs.js";
 import { createHubToolHandler } from "../../hub/hub-tool-handler.js";
@@ -23,18 +17,10 @@ function createHarness(overrides: Partial<ExecuteToolDeps> = {}) {
   const storage = new InMemoryStorage();
   const thoughtHandler = new ThoughtHandler(true, storage);
   const sessionHandler = new SessionHandler({ storage, thoughtHandler });
-  const knowledgeHandler = new KnowledgeHandler(new FileSystemKnowledgeStorage({}));
-  const notebookHandler = new NotebookHandler();
-  const protocolHandler = new InMemoryProtocolHandler();
 
   const tool = new ExecuteTool({
     thoughtTool: new ThoughtTool(thoughtHandler),
     sessionTool: new SessionTool(sessionHandler),
-    knowledgeTool: new KnowledgeTool(knowledgeHandler),
-    notebookTool: new NotebookTool(notebookHandler),
-    theseusTool: new TheseusTool(protocolHandler),
-    ulyssesTool: new UlyssesTool(protocolHandler),
-    observabilityHandler: new ObservabilityGatewayHandler({ storage }),
     ...overrides,
   });
 
@@ -60,9 +46,6 @@ async function createHubHarness() {
   const storage = new InMemoryStorage();
   const thoughtHandler = new ThoughtHandler(true, storage);
   const sessionHandler = new SessionHandler({ storage, thoughtHandler });
-  const knowledgeHandler = new KnowledgeHandler(new FileSystemKnowledgeStorage({}));
-  const notebookHandler = new NotebookHandler();
-  const protocolHandler = new InMemoryProtocolHandler();
 
   const hubStorage = createFileSystemHubStorage(hubDir);
   const hubToolHandler = createHubToolHandler({
@@ -73,11 +56,6 @@ async function createHubHarness() {
   const tool = new ExecuteTool({
     thoughtTool: new ThoughtTool(thoughtHandler),
     sessionTool: new SessionTool(sessionHandler),
-    knowledgeTool: new KnowledgeTool(knowledgeHandler),
-    notebookTool: new NotebookTool(notebookHandler),
-    theseusTool: new TheseusTool(protocolHandler),
-    ulyssesTool: new UlyssesTool(protocolHandler),
-    observabilityHandler: new ObservabilityGatewayHandler({ storage }),
     hubDispatcher: {
       handle: (input) => hubToolHandler.handle(input, "execute-test-session"),
     },
@@ -174,6 +152,19 @@ describe("thoughtbox_execute", () => {
     expect(output.error).toContain("Hub operations are unavailable");
   });
 
+  it("tb exposes exactly the four kept namespaces", async () => {
+    // The extraction's surface invariant, guarded from inside the sandbox: a
+    // re-added namespace (tb.knowledge, tb.notebook, ...) fails here by name
+    // even if it never reaches the search catalog.
+    const tool = createExecuteTool();
+    const result = await tool.handle({
+      code: `async () => Object.keys(tb).sort()`,
+    });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.error).toBeUndefined();
+    expect(output.result).toEqual(["hub", "session", "thought", "vars"]);
+  });
+
   it("tb.init is not available", async () => {
     const tool = createExecuteTool();
     const result = await tool.handle({
@@ -192,34 +183,6 @@ describe("thoughtbox_execute", () => {
     expect(output.error).toBeUndefined();
     // InMemoryStorage returns empty sessions by default
     expect(output.result).toBeDefined();
-  });
-
-  it("tb.branch.* returns a hosted-mode error when no branchHandler is wired", async () => {
-    // createExecuteTool() omits branchHandler, mirroring local/self-hosted mode.
-    const tool = createExecuteTool();
-    const result = await tool.handle({
-      code: `async () => { return await tb.branch.list({ sessionId: "s1" }); }`,
-    });
-    const output = JSON.parse(result.content[0].text);
-    expect(output.result).toBeNull();
-    expect(output.error).toContain("hosted mode");
-  });
-
-  it("tb.knowledge.* returns a clean error when knowledge init failed", async () => {
-    // Mirrors server-factory behavior: knowledge storage init threw, so
-    // knowledgeTool is undefined and the captured failure reason is threaded in.
-    const tool = createExecuteTool({
-      knowledgeTool: undefined,
-      knowledgeUnavailableReason: "EACCES: permission denied, mkdir '/data/knowledge'",
-    });
-    const result = await tool.handle({
-      code: `async () => { return await tb.knowledge.stats(); }`,
-    });
-    const output = JSON.parse(result.content[0].text);
-    expect(output.result).toBeNull();
-    expect(output.error).toBe(
-      "knowledge unavailable: EACCES: permission denied, mkdir '/data/knowledge'",
-    );
   });
 
   it("can call tb.thought()", async () => {
@@ -256,60 +219,6 @@ describe("thoughtbox_execute", () => {
     expect(output.error).toBeUndefined();
     expect(output.result.thought).toBeDefined();
     expect(output.result.sessions).toBeDefined();
-  });
-
-  it("can call tb.theseus()", async () => {
-    const tool = createExecuteTool();
-    const result = await tool.handle({
-      code: `async () => {
-        const init = await tb.theseus({
-          operation: "init",
-          scope: ["src/code-mode/execute-tool.ts"],
-          description: "Exercise protocol surface",
-        });
-        const status = await tb.theseus({ operation: "status" });
-        return { init, status };
-      }`,
-    });
-    const output = JSON.parse(result.content[0].text);
-    expect(output.error).toBeUndefined();
-    expect(output.result.init.session_id).toBeDefined();
-    expect(output.result.status.session_id).toBe(output.result.init.session_id);
-  });
-
-  it("can call tb.ulysses()", async () => {
-    const tool = createExecuteTool();
-    const result = await tool.handle({
-      code: `async () => {
-        const init = await tb.ulysses({
-          operation: "init",
-          problem: "Exercise protocol surface",
-          constraints: ["unit-test"],
-        });
-        const status = await tb.ulysses({ operation: "status" });
-        return { init, status };
-      }`,
-    });
-    const output = JSON.parse(result.content[0].text);
-    expect(output.error).toBeUndefined();
-    expect(output.result.init.session_id).toBeDefined();
-    expect(output.result.status.session_id).toBe(output.result.init.session_id);
-  });
-
-  it("can call tb.observability()", async () => {
-    const tool = createExecuteTool();
-    const result = await tool.handle({
-      code: `async () => {
-        return await tb.observability({
-          operation: "health",
-          args: { services: ["thoughtbox"] },
-        });
-      }`,
-    });
-    const output = JSON.parse(result.content[0].text);
-    expect(output.error).toBeUndefined();
-    expect(output.result.timestamp).toBeDefined();
-    expect(output.result.services).toBeDefined();
   });
 
   it("returns truncated output for oversized results", async () => {
@@ -429,33 +338,6 @@ describe("thoughtbox_execute named-vs-positional coercion (feedback A3)", () => 
     const output = JSON.parse(result.content[0].text);
     expect(output.error).toContain("ambiguous");
     expect(output.error).toContain("tb.session.export");
-  });
-
-  it("tb.knowledge.getEntity accepts positional, camelCase, and snake_case named forms", async () => {
-    const knowledgeDir = await mkdtemp(join(tmpdir(), "tb-knowledge-coercion-"));
-    tempHubDirs.push(knowledgeDir);
-    const knowledgeStorage = new FileSystemKnowledgeStorage({ basePath: knowledgeDir });
-    await knowledgeStorage.setProject("coercion-test");
-    const { tool } = createHarness({
-      knowledgeTool: new KnowledgeTool(new KnowledgeHandler(knowledgeStorage)),
-    });
-    const result = await tool.handle({
-      code: `async () => {
-        const e = await tb.knowledge.createEntity({
-          name: "coercion-test-entity",
-          type: "Concept",
-          label: "Coercion Test",
-        });
-        const positional = await tb.knowledge.getEntity(e.id);
-        const camel = await tb.knowledge.getEntity({ entityId: e.id });
-        const snake = await tb.knowledge.getEntity({ entity_id: e.id });
-        return { positional, camel, snake };
-      }`,
-    });
-    const output = JSON.parse(result.content[0].text);
-    expect(output.error).toBeUndefined();
-    expect(output.result.camel.id).toBe(output.result.positional.id);
-    expect(output.result.snake.id).toBe(output.result.positional.id);
   });
 });
 

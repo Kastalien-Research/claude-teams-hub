@@ -405,6 +405,16 @@ Use \`console.log()\` for debugging — output captured in response logs.`;
       ),
     "session-operations": () => getSessionOperationsCatalog(),
     "hub-operations": () => getHubOperationsCatalog(),
+    "gateway-operations": () =>
+      JSON.stringify(
+        {
+          version: "1.0.0",
+          publicTools: searchCatalog.publicTools,
+          operations: searchCatalog.operations,
+        },
+        null,
+        2
+      ),
     "patterns-cookbook": () => PATTERNS_COOKBOOK,
     cipher: () => THOUGHTBOX_CIPHER,
     "session-analysis-guide": () => SESSION_ANALYSIS_GUIDE,
@@ -460,6 +470,17 @@ Use \`console.log()\` for debugging — output captured in response logs.`;
     const opDef = getHubOp(op as string);
     if (!opDef) throw new Error(`Unknown hub operation: ${op}`);
     return { contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(opDef, null, 2) }] };
+  });
+
+  registerTemplate("gateway-operation", async (uri, { op }) => {
+    const opName = op as string;
+    for (const [module, ops] of Object.entries(searchCatalog.operations)) {
+      const opDef = (ops as Record<string, object>)[opName];
+      if (opDef) {
+        return { contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify({ module, name: opName, ...opDef }, null, 2) }] };
+      }
+    }
+    throw new Error(`Unknown gateway operation: ${opName}`);
   });
 
   registerTemplate("interleaved-guide", async (_uri, { guide }) => ({

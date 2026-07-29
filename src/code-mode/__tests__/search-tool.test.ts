@@ -12,51 +12,7 @@ describe("thoughtbox_search", () => {
     });
     const output = JSON.parse(result.content[0].text);
     expect(output.error).toBeUndefined();
-    expect(output.result).toEqual([
-      "branch",
-      "claims",
-      "hub",
-      "knowledge",
-      // --- tb.merge (SPEC-MERGE-CORE) — owned by merge-core ---
-      "merge",
-      // --- end tb.merge ---
-      "notebook",
-      "observability",
-      "runbook",
-      "session",
-      "theseus",
-      "thought",
-      "ulysses",
-      // tb.vars.* — durable named session variables (RLM-lite)
-      "vars",
-    ]);
-  });
-
-  // --- tb.merge (SPEC-MERGE-CORE) — owned by merge-core ---
-  it("merge operations are discoverable in the catalog (no approve)", async () => {
-    const result = await tool.handle({
-      code: "async () => Object.keys(catalog.operations.merge).sort()",
-    });
-    const output = JSON.parse(result.content[0].text);
-    expect(output.error).toBeUndefined();
-    // Approval is human-only via apps/web (SPEC-MERGE-CORE c4):
-    // exactly request/status/list/claim_diff, never an approve operation.
-    expect(output.result).toEqual(["claim_diff", "list", "request", "status"]);
-  });
-  // --- end tb.merge ---
-
-  it("claims operations are discoverable in the catalog", async () => {
-    const result = await tool.handle({
-      code: "async () => Object.keys(catalog.operations.claims).sort()",
-    });
-    const output = JSON.parse(result.content[0].text);
-    expect(output.error).toBeUndefined();
-    expect(output.result).toHaveLength(11);
-    expect(output.result).toContain("assert");
-    expect(output.result).toContain("supersede");
-    expect(output.result).toContain("affected");
-    expect(output.result).toContain("verify");
-    expect(output.result).toContain("changed_since");
+    expect(output.result).toEqual(["hub", "session", "thought", "vars"]);
   });
 
   it("hub operations are discoverable in the catalog", async () => {
