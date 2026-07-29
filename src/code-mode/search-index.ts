@@ -9,6 +9,7 @@
 import { SESSION_OPERATIONS } from "../sessions/operations.js";
 import { THOUGHT_OPERATIONS } from "../thought/operations.js";
 import { HUB_OPERATIONS } from "../hub/operations.js";
+import { HUB_OPERATION_SDK_CALLS } from "./hub-sdk-methods.js";
 // tb.vars.* — durable named session variables (RLM-lite)
 import { VARS_OPERATIONS } from "./vars-operations.js";
 import {
@@ -27,6 +28,14 @@ export interface SearchCatalog {
     description: string;
     category: string;
     inputSchema?: object;
+    /**
+     * The fully-qualified thoughtbox_execute call for this operation, e.g.
+     * "tb.hub.reviewProposal" for the hub operation "review_proposal".
+     * Present on every hub entry, because hub catalog keys are snake_case
+     * while the SDK is camelCase and a discovered name that is not callable
+     * is a discovery lie (docs/KNOWN-ISSUES.md #3).
+     */
+    sdkMethod?: string;
   }>>;
   prompts: Array<{
     name: string;
@@ -94,12 +103,23 @@ export interface CatalogAnnotation {
 export const CATALOG_ANNOTATIONS: Record<string, CatalogAnnotation> = {
   "thought.thoughtbox_thought": {
     whenToUse:
-      "Submitting a structured thought. Submit one thought per call so the response's guidance can inform the next thought. Prefer a semantic thoughtType (action_report, belief_snapshot, decision_frame, assumption_update, context_snapshot, progress) over reasoning whenever the thought carries a durable finding — only the typed forms populate payloads that session_query_thoughts can retrieve. Set nextThoughtNeeded=false on the final thought to complete the session.",
+      "Submitting a structured thought. Submit one thought per call so the response's guidance can inform the next thought. Prefer a semantic thoughtType (action_report, belief_snapshot, decision_frame, assumption_update, context_snapshot, progress, action_receipt) over reasoning whenever the thought carries a durable finding — only the typed forms populate payloads that session_query_thoughts can retrieve. Set nextThoughtNeeded=false on the final thought to complete the session. " +
+      "Each typed thoughtType REQUIRES its payload and the call fails without it: " +
+      "decision_frame → confidence ('high'|'medium'|'low') + options (non-empty, exactly one selected:true); " +
+      "action_report → actionResult { success, reversible ('yes'|'no'|'partial'), tool, target }; " +
+      "belief_snapshot → beliefs.entities (non-empty); " +
+      "assumption_update → assumptionChange.newStatus ('believed'|'uncertain'|'refuted'); " +
+      "context_snapshot → contextData (object); " +
+      "progress → progressData { task, status ('pending'|'in_progress'|'done'|'blocked') }; " +
+      "action_receipt → receiptData { toolName, match (boolean) }. " +
+      "reasoning, finding, synthesis, question and conclusion take no payload beyond `thought`. The inputSchema publishes the same contract as if/then entries under allOf.",
     commonMistakes: [
       "defaulting to thoughtType 'reasoning' for findings a teammate will need to query later",
       "forgetting to complete sessions (nextThoughtNeeded stays true)",
       "reusing thoughtNumber within the same branch (must be unique per session+branch)",
+      "sending a typed thoughtType with only thought/nextThoughtNeeded/thoughtType — the three base required fields are not sufficient for any typed form",
       "submitting decision_frame without exactly one selected:true option",
+      "passing branchId without branchFromThought",
     ],
     relatedOps: ["session.session_resume", "session.session_query_thoughts"],
   },
@@ -202,21 +222,24 @@ export function annotateCatalog(
   }
 }
 
+/**
+ * @param sdkCallFor Optional resolver from operation name to the fully-
+ *   qualified `tb` call that runs it. Supplied for the hub module, whose
+ *   catalog keys differ from its SDK method names.
+ */
 function indexOperations(
   ops: OperationEntry[],
-): Record<string, { title: string; description: string; category: string; inputSchema?: object }> {
-  const indexed: Record<string, {
-    title: string;
-    description: string;
-    category: string;
-    inputSchema?: object;
-  }> = {};
+  sdkCallFor?: (operationName: string) => string | undefined,
+): SearchCatalog["operations"][string] {
+  const indexed: SearchCatalog["operations"][string] = {};
   for (const op of ops) {
+    const sdkMethod = sdkCallFor?.(op.name);
     indexed[op.name] = {
       title: op.title,
       description: op.description,
       category: op.category,
       inputSchema: op.inputSchema,
+      ...(sdkMethod ? { sdkMethod } : {}),
     };
   }
   return indexed;
@@ -236,7 +259,10 @@ export function buildSearchCatalog(): SearchCatalog {
     ],
 
     operations: {
-      hub: indexOperations(HUB_OPERATIONS),
+      hub: indexOperations(
+        HUB_OPERATIONS,
+        (name) => HUB_OPERATION_SDK_CALLS[name],
+      ),
       thought: indexOperations(THOUGHT_OPERATIONS),
       session: indexOperations(
         SESSION_OPERATIONS.filter((op) => CORE_SESSION_OPS.has(op.name)),

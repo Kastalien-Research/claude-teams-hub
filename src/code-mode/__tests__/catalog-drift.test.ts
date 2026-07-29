@@ -17,8 +17,13 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import { createMcpServer } from "../../server-factory.js";
 import { InMemoryStorage } from "../../persistence/index.js";
+import { ThoughtHandler } from "../../thought-handler.js";
 import { buildSearchCatalog } from "../search-index.js";
 import { SEARCH_TOOL } from "../search-tool.js";
+import { HUB_SDK_METHODS, HUB_OPERATION_SDK_CALLS } from "../hub-sdk-methods.js";
+import { TB_SDK_TYPES } from "../sdk-types.js";
+import { HUB_OPERATIONS } from "../../hub/operations.js";
+import { THOUGHT_TYPE_REQUIRED_FIELDS } from "../../thought/operations.js";
 import {
   STATIC_RESOURCES,
   RESOURCE_TEMPLATES,
@@ -153,5 +158,214 @@ describe("static catalog single-registry (drift guard)", () => {
       expect(SEARCH_TOOL.description).toContain(moduleName);
     }
     expect(Object.keys(catalog.operations)).toContain("hub");
+  });
+});
+
+/**
+ * KNOWN-ISSUES #3: catalog hub keys are snake_case, the executable SDK is
+ * camelCase. Every discovered hub entry must name the call that runs it, and
+ * that name must be the one execute-tool actually binds — hence both surfaces
+ * reading the single HUB_SDK_METHODS map.
+ */
+describe("hub catalog entries name their callable (discovery/execute parity)", () => {
+  it("every one of the 28 hub operations carries an sdkMethod", () => {
+    const hub = buildSearchCatalog().operations["hub"]!;
+    const names = Object.keys(hub);
+    expect(names).toHaveLength(28);
+    expect(HUB_OPERATIONS).toHaveLength(28);
+
+    const missing = names.filter((name) => !hub[name]!.sdkMethod);
+    expect(missing).toEqual([]);
+  });
+
+  it("sdkMethod is the fully-qualified tb.hub call execute-tool binds", () => {
+    const hub = buildSearchCatalog().operations["hub"]!;
+    // Invert the map execute-tool iterates to build tb.hub, independently of
+    // HUB_OPERATION_SDK_CALLS, so a wrong derivation cannot pass.
+    const expected = Object.fromEntries(
+      Object.entries(HUB_SDK_METHODS).map(([method, operation]) => [
+        operation,
+        `tb.hub.${method}`,
+      ]),
+    );
+    const actual = Object.fromEntries(
+      Object.entries(hub).map(([name, op]) => [name, op.sdkMethod]),
+    );
+    expect(actual).toEqual(expected);
+    expect(HUB_OPERATION_SDK_CALLS).toEqual(expected);
+  });
+
+  it("the map covers exactly the hub operations the catalog publishes", () => {
+    const operationNames = HUB_OPERATIONS.map((op) => op.name).sort();
+    expect(Object.values(HUB_SDK_METHODS).sort()).toEqual(operationNames);
+  });
+
+  it("search-tool description states the sandbox contract and sdkMethod", () => {
+    // The sandbox binds `catalog` already parsed (verified by
+    // search-tool.test.ts); the description must not send agents to
+    // __catalogJson or imply tb is reachable from here.
+    expect(SEARCH_TOOL.description).toContain("sdkMethod");
+    expect(SEARCH_TOOL.description).toContain("tb.hub.reviewProposal");
+    expect(SEARCH_TOOL.description).toContain("already parsed and frozen in scope");
+    expect(SEARCH_TOOL.description).toContain("thoughtbox_execute");
+  });
+});
+
+/**
+ * KNOWN-ISSUES #2: the catalog advertised only the three base required fields
+ * while the server enforces a payload per thoughtType, so a client trusting
+ * the published schema could not build a valid typed thought.
+ *
+ * THOUGHT_TYPE_REQUIRED_FIELDS is the transcription of
+ * ThoughtHandler.validateStructuredFields that the catalog schema derives
+ * from. These tests hold it against the running validator, so the schema
+ * cannot claim a contract the server does not enforce, or miss one it does.
+ */
+describe("thoughtbox_thought publishes its typed-payload contract", () => {
+  /** A minimal payload that satisfies each type's validator. */
+  const MINIMAL_PAYLOADS: Record<string, Record<string, unknown>> = {
+    reasoning: {},
+    finding: {},
+    synthesis: {},
+    question: {},
+    conclusion: {},
+    decision_frame: {
+      confidence: "high",
+      options: [{ label: "a", selected: true }],
+    },
+    action_report: {
+      actionResult: { success: true, reversible: "yes", tool: "Bash", target: "/tmp" },
+    },
+    belief_snapshot: { beliefs: { entities: [{ name: "e", state: "s" }] } },
+    assumption_update: { assumptionChange: { newStatus: "refuted" } },
+    context_snapshot: { contextData: {} },
+    progress: { progressData: { task: "t", status: "done" } },
+    action_receipt: { receiptData: { toolName: "Bash", match: true } },
+  };
+
+  async function submit(input: Record<string, unknown>) {
+    const storage = new InMemoryStorage();
+    await storage.initialize();
+    const handler = new ThoughtHandler(true, storage, `drift-${Math.random()}`);
+    await handler.initialize();
+    const result = await handler.processThought({
+      thought: "contract probe",
+      nextThoughtNeeded: false,
+      ...input,
+    });
+    return {
+      ok: result.isError !== true,
+      text: String(result.content[0]?.text ?? ""),
+    };
+  }
+
+  it("covers exactly the thoughtTypes the validator accepts", async () => {
+    // Ask the validator itself which types are valid rather than re-reading
+    // the switch statement: its rejection message enumerates them.
+    const { ok, text } = await submit({ thoughtType: "not_a_real_type" });
+    expect(ok).toBe(false);
+    const listed = text
+      .slice(text.indexOf("Valid types:") + "Valid types:".length)
+      .replace(/\\n/g, " ")
+      .split(/[,.]/)
+      .map((s) => s.trim())
+      .filter((s) => /^[a-z_]+$/.test(s));
+
+    expect(listed.length).toBeGreaterThan(0);
+    expect(Object.keys(THOUGHT_TYPE_REQUIRED_FIELDS).sort()).toEqual(
+      [...new Set(listed)].sort(),
+    );
+  });
+
+  it("accepts every thoughtType given only the advertised required fields", async () => {
+    for (const [thoughtType, payload] of Object.entries(MINIMAL_PAYLOADS)) {
+      const { ok, text } = await submit({ thoughtType, ...payload });
+      expect(ok, `${thoughtType} rejected a minimal valid payload: ${text}`).toBe(true);
+    }
+  });
+
+  it("rejects every typed thoughtType when its advertised payload is omitted", async () => {
+    const typed = Object.entries(THOUGHT_TYPE_REQUIRED_FIELDS).filter(
+      ([, fields]) => fields.length > 0,
+    );
+    // Every type with a declared requirement, and no others, must fail bare.
+    expect(typed.map(([t]) => t).sort()).toEqual([
+      "action_receipt",
+      "action_report",
+      "assumption_update",
+      "belief_snapshot",
+      "context_snapshot",
+      "decision_frame",
+      "progress",
+    ]);
+
+    for (const [thoughtType] of typed) {
+      const { ok } = await submit({ thoughtType });
+      expect(ok, `${thoughtType} accepted a thought with no payload`).toBe(false);
+    }
+    for (const [thoughtType, fields] of Object.entries(THOUGHT_TYPE_REQUIRED_FIELDS)) {
+      if (fields.length > 0) continue;
+      const { ok } = await submit({ thoughtType });
+      expect(ok, `${thoughtType} should need no payload`).toBe(true);
+    }
+  });
+
+  it("the advertised schema publishes the same per-type requirements", () => {
+    const op = buildSearchCatalog().operations["thought"]!["thoughtbox_thought"]!;
+    const schema = op.inputSchema as {
+      properties: Record<string, unknown>;
+      required: string[];
+      allOf: Array<{ if: { properties: { thoughtType: { const: string } } }; then: { required: string[] } }>;
+    };
+
+    expect(schema.required).toEqual(["thought", "nextThoughtNeeded", "thoughtType"]);
+
+    // Each required payload field is a declared property, and each type's
+    // conditional requirement is published.
+    const published = Object.fromEntries(
+      schema.allOf.map((entry) => [
+        entry.if.properties.thoughtType.const,
+        entry.then.required.slice().sort(),
+      ]),
+    );
+    const expected = Object.fromEntries(
+      Object.entries(THOUGHT_TYPE_REQUIRED_FIELDS)
+        .filter(([, fields]) => fields.length > 0)
+        .map(([thoughtType, fields]) => [thoughtType, [...fields].sort()]),
+    );
+    expect(published).toEqual(expected);
+
+    for (const fields of Object.values(THOUGHT_TYPE_REQUIRED_FIELDS)) {
+      for (const field of fields) {
+        expect(schema.properties).toHaveProperty(field);
+      }
+    }
+
+    // thoughtType's enum must not advertise a type the map does not describe.
+    const enumValues = (schema.properties["thoughtType"] as { enum: string[] }).enum;
+    expect(enumValues.slice().sort()).toEqual(
+      Object.keys(THOUGHT_TYPE_REQUIRED_FIELDS).sort(),
+    );
+  });
+
+  it("the description and annotation name the typed payloads", () => {
+    const op = buildSearchCatalog().operations["thought"]!["thoughtbox_thought"]!;
+    // Annotations are appended to the description by annotateCatalog, so one
+    // string covers both surfaces an agent reads at discovery time.
+    for (const field of new Set(Object.values(THOUGHT_TYPE_REQUIRED_FIELDS).flat())) {
+      expect(op.description).toContain(field);
+    }
+    for (const thoughtType of Object.keys(THOUGHT_TYPE_REQUIRED_FIELDS)) {
+      expect(op.description).toContain(thoughtType);
+    }
+  });
+
+  it("the tb SDK declaration names every thoughtType and its payload", () => {
+    for (const thoughtType of Object.keys(THOUGHT_TYPE_REQUIRED_FIELDS)) {
+      expect(TB_SDK_TYPES).toContain(thoughtType);
+    }
+    for (const field of new Set(Object.values(THOUGHT_TYPE_REQUIRED_FIELDS).flat())) {
+      expect(TB_SDK_TYPES).toContain(field);
+    }
   });
 });

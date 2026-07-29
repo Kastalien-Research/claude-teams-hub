@@ -10,6 +10,7 @@ import * as vm from "node:vm";
 import { z } from "zod";
 import type { CodeModeResult } from "./types.js";
 import { TB_SDK_TYPES } from "./sdk-types.js";
+import { HUB_SDK_METHODS } from "./hub-sdk-methods.js";
 
 import type { ThoughtTool, ThoughtToolInput } from "../thought/tool.js";
 import type { SessionTool, SessionToolInput } from "../sessions/tool.js";
@@ -131,41 +132,6 @@ function unwrapHubResult(raw: HubToolResult): unknown {
   }
   return parsed;
 }
-
-/**
- * tb.hub method names mapped to hub operation names
- * (canonical list: src/hub/operations.ts).
- */
-const HUB_SDK_METHODS: Record<string, string> = {
-  register: "register",
-  quickJoin: "quick_join",
-  listWorkspaces: "list_workspaces",
-  whoami: "whoami",
-  createWorkspace: "create_workspace",
-  joinWorkspace: "join_workspace",
-  getProfilePrompt: "get_profile_prompt",
-  createProblem: "create_problem",
-  claimProblem: "claim_problem",
-  updateProblem: "update_problem",
-  listProblems: "list_problems",
-  addDependency: "add_dependency",
-  removeDependency: "remove_dependency",
-  readyProblems: "ready_problems",
-  blockedProblems: "blocked_problems",
-  createSubProblem: "create_sub_problem",
-  createProposal: "create_proposal",
-  reviewProposal: "review_proposal",
-  mergeProposal: "merge_proposal",
-  listProposals: "list_proposals",
-  markConsensus: "mark_consensus",
-  endorseConsensus: "endorse_consensus",
-  listConsensus: "list_consensus",
-  postMessage: "post_message",
-  readChannel: "read_channel",
-  postSystemMessage: "post_system_message",
-  workspaceStatus: "workspace_status",
-  workspaceDigest: "workspace_digest",
-};
 
 interface TbContext {
   sessionId?: string;

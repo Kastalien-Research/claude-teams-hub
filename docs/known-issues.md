@@ -32,28 +32,72 @@ register/quickJoin at most once per MCP session; every later workspace via
 **Fix direction**: `quick_join` should rebind or reuse the session's existing
 identity when one exists (or refuse loudly), never silently register a second.
 
-## 2. Catalog inputSchema for `thoughtbox_thought` omits type-required payloads
+## 2. ~~Catalog inputSchema for `thoughtbox_thought` omits type-required payloads~~ FIXED
 
-The server enforces per-`thoughtType` payloads (`thought-handler.ts`):
-`decision_frame` requires `confidence` + `options` (exactly one
-`selected: true`); `action_report` requires
-`actionResult: {success, reversible, tool, target}`; `belief_snapshot`
-requires `beliefs: {entities: [{name, state}], constraints?, risks?}`. The
-catalog's advertised schema lists required
-`["thought","nextThoughtNeeded","thoughtType"]` only — a client that trusts
-the published schema cannot construct a valid typed thought and learns the
-real shape from serial validation errors.
+**Fixed 2026-07-29.** The payload contract is now transcribed from the
+validator into `THOUGHT_TYPE_REQUIRED_FIELDS` (`src/thought/operations.ts`),
+and all three discovery surfaces derive from it: the catalog `inputSchema`
+(every payload is a declared property with its own enforced `required` keys,
+plus standard JSON Schema `allOf` if/then for the conditional half), the
+`thought.thoughtbox_thought` annotation in `CATALOG_ANNOTATIONS`, and the
+`tb.thought(...)` declaration in `sdk-types.ts`. `catalog-drift.test.ts`
+holds the map against the RUNNING validator — it asks the validator which
+types it accepts, submits a minimal payload for each, and asserts each typed
+form is rejected when its payload is omitted — so the published schema
+cannot claim a contract the server does not enforce.
 
-**Fix direction**: surface the per-type requirements in the catalog schema
-(or at minimum in the operation's annotation text).
+The full enforced contract, as read from `ThoughtHandler.validateStructuredFields`:
 
-## 3. `thoughtbox_search` sandbox lacks `search()` and `tb`
+| thoughtType | enforced payload |
+| --- | --- |
+| `reasoning`, `finding`, `synthesis`, `question`, `conclusion` | none beyond `thought` |
+| `decision_frame` | `confidence` ∈ high/medium/low, `options` non-empty with exactly one `selected: true` |
+| `action_report` | `actionResult` `{success: boolean, reversible: 'yes'\|'no'\|'partial', tool, target}` |
+| `belief_snapshot` | `beliefs.entities` non-empty (item keys NOT validated) |
+| `assumption_update` | `assumptionChange.newStatus` ∈ believed/uncertain/refuted (`text`/`oldStatus` NOT validated) |
+| `context_snapshot` | `contextData` is an object (no key validated) |
+| `progress` | `progressData` `{task, status ∈ pending/in_progress/done/blocked}` |
+| `action_receipt` | `receiptData` `{toolName, match: boolean}` |
 
-Sandbox globals are exactly `["__catalogJson","console","setTimeout",
-"clearTimeout"]`. Discovery code must parse `__catalogJson` by hand; catalog
-keys are also snake_case (`review_proposal`) while the executable SDK is
-camelCase (`tb.hub.reviewProposal`), so nothing discovered is directly
-callable by its discovered name.
+Two findings beyond the original report:
+
+- **`action_receipt` was missing from the advertised enum entirely**, in the
+  catalog, in `sdk-types.ts`, and in `thoughtToolInputSchema` — the reverse
+  lie: a type the validator accepts (verified by submitting one through
+  `tb.thought`) that no discovery surface admitted existed. Added to all
+  three, along with the `receiptData` property/`ReceiptDataSchema` that only
+  existed on the internal `ThoughtData` type.
+- **Three payloads are looser than their declared TypeScript shape.**
+  `beliefs.entities` items, `assumptionChange.text`/`oldStatus`, and every
+  `contextData` key are accepted absent. The schema documents them as
+  properties but does NOT mark them required, because marking them so would
+  be a new lie in the strict direction.
+
+## 3. ~~`thoughtbox_search` sandbox lacks `search()` and `tb`~~ FIXED (and partly misdiagnosed)
+
+**Fixed 2026-07-29.** Each hub catalog entry now carries `sdkMethod` — the
+fully-qualified call that runs it, e.g. `review_proposal` →
+`sdkMethod: "tb.hub.reviewProposal"` — so a discovered operation names its
+own callable. Both surfaces read ONE map, `HUB_SDK_METHODS`, extracted to the
+import-free leaf module `src/code-mode/hub-sdk-methods.ts`: `execute-tool.ts`
+builds `tb.hub` from it and `search-index.ts` stamps the catalog from its
+derived inverse, so the two cannot diverge. `SEARCH_TOOL`'s description now
+states the sandbox contract and points at `sdkMethod`. Pinned by
+`catalog-drift.test.ts` (all 28 hub ops, and the catalog's `sdkMethod`
+compared against an independent inversion of the map `execute-tool` iterates)
+and `server-surface.test.ts` (the same, on the served gateway resource).
+
+Deliberately NOT done: no `search()` helper and no `tb` in the search
+sandbox. That would widen a read-only discovery surface into an executing
+one; making the catalog carry callable names is the honest fix.
+
+**The report's other half was wrong.** "Discovery code must parse
+`__catalogJson` by hand" does not hold — `search-tool.ts` wraps the submitted
+code with `const catalog = Object.freeze(JSON.parse(__catalogJson))`, so
+`catalog` is lexically in scope, already parsed and frozen. Verified by
+probe and by `search-tool.test.ts`. Only the snake_case/camelCase mismatch
+was real. The tool description now says so explicitly, since an agent reading
+the old issue would have written pointless parsing code.
 
 ## 4. `hub-storage-fs` channel read/write key asymmetry
 
