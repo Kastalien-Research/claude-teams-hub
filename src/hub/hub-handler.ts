@@ -12,7 +12,7 @@ import { createProblemsManager } from './problems.js';
 import { createProposalsManager } from './proposals.js';
 import { createConsensusManager } from './consensus.js';
 import { createChannelsManager } from './channels.js';
-import { getProfilePromptContent } from './profiles-registry.js';
+import { getProfilePromptContent, isValidProfile } from './profiles-registry.js';
 import type { ThoughtStoreForWorkspace } from './workspace.js';
 
 type ThoughtStore = ThoughtStoreForWorkspace & {
@@ -97,17 +97,49 @@ export function createHubHandler(
           if (!name) throw new Error('quick_join requires name');
           if (!wsId) throw new Error('quick_join requires workspaceId');
 
-          // 1. Register
-          const reg = await identity.register({ name, clientInfo, profile });
-          emit({
-            type: 'agent_registered',
-            workspaceId: '*',
-            data: {
-              agentId: reg.agentId,
-              name: reg.name,
-              ...(profile ? { profile } : {}),
-            },
-          });
+          // A session identity, once established, is never silently replaced.
+          // Registering unconditionally here minted an orphan agent under the
+          // caller's own name, joined THAT, and returned success describing an
+          // agent the caller is not — every later call then failed "Not a
+          // member of this workspace" (docs/known-issues.md #1). Same name →
+          // reuse the session identity. A DIFFERENT name is the sanctioned
+          // multi-agent flow (a coordinator minting sub-agents it drives via
+          // explicit agentId): still mint, but say in the result that the
+          // session default is unchanged, so the trap is visible.
+          const existing = agentId ? await identity.getAgent(agentId) : null;
+          const reused = existing !== null && existing.name === name;
+
+          // The reuse path must not become a validation bypass: a supplied
+          // profile is checked exactly as register checks it, and supplied
+          // profile/clientInfo are persisted onto the existing agent rather
+          // than silently dropped (Greptile P1/P2 on the fix PR).
+          if (reused && (profile !== undefined || clientInfo !== undefined)) {
+            if (profile !== undefined && !isValidProfile(profile)) {
+              const validProfiles = ['MANAGER', 'ARCHITECT', 'DEBUGGER', 'SECURITY', 'RESEARCHER', 'REVIEWER'];
+              throw new Error(`Invalid profile '${profile}'. Valid profiles: ${validProfiles.join(', ')}`);
+            }
+            const updated = {
+              ...existing,
+              ...(profile !== undefined ? { profile } : {}),
+              ...(clientInfo !== undefined ? { clientInfo } : {}),
+            };
+            await storage.saveAgent(updated);
+          }
+
+          const reg = reused
+            ? existing
+            : await identity.register({ name, clientInfo, profile });
+          if (!reused) {
+            emit({
+              type: 'agent_registered',
+              workspaceId: '*',
+              data: {
+                agentId: reg.agentId,
+                name: reg.name,
+                ...(profile ? { profile } : {}),
+              },
+            });
+          }
 
           // 2. Join workspace
           const joinResult = await workspace.joinWorkspace(reg.agentId, { workspaceId: wsId });
@@ -124,6 +156,15 @@ export function createHubHandler(
             workspace: joinResult.workspace,
             problems: joinResult.problems,
             proposals: joinResult.proposals,
+            ...(existing && !reused
+              ? {
+                  note:
+                    `This MCP session's default identity remains '${existing.name}' ` +
+                    `(${existing.agentId}). To act as '${reg.name}', pass ` +
+                    `agentId: '${reg.agentId}' explicitly on every call; without it, ` +
+                    `calls act as '${existing.name}'.`,
+                }
+              : {}),
           };
         }
       }

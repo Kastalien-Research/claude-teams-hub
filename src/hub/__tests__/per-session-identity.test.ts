@@ -214,4 +214,53 @@ describe('HubToolHandler — Per-Session Identity Isolation', () => {
     expect(memberIds).toContain(betaId);
     expect(memberIds).toContain(gammaId);
   });
+
+  // Known-issue #1: this is the exact defect layer — the tool handler passed
+  // agentId null for every quick_join, so the hub handler could not see the
+  // session's identity and registered a fresh agent each time. The session's
+  // second quick_join must act as the session default, not as a new agent.
+  it('a second quick_join in one session reuses the session identity, not an orphan', async () => {
+    const coordReg = await handler.handle(
+      { operation: 'register', name: 'Coordinator' },
+      'sess-coord',
+    );
+    const coordId = JSON.parse(coordReg.content[0].text).agentId;
+    const ws1 = await handler.handle(
+      { operation: 'create_workspace', name: 'WS1', description: 'first' },
+      'sess-coord',
+    );
+    const ws1Id = JSON.parse(ws1.content[0].text).workspaceId;
+    const ws2 = await handler.handle(
+      { operation: 'create_workspace', name: 'WS2', description: 'second' },
+      'sess-coord',
+    );
+    const ws2Id = JSON.parse(ws2.content[0].text).workspaceId;
+    expect(coordId).toBeDefined();
+
+    const join1 = await handler.handle(
+      { operation: 'quick_join', name: 'Bob', workspaceId: ws1Id },
+      'sess-bob',
+    );
+    const bobId = JSON.parse(join1.content[0].text).agentId;
+
+    const join2 = await handler.handle(
+      { operation: 'quick_join', name: 'Bob', workspaceId: ws2Id },
+      'sess-bob',
+    );
+    const rejoined = JSON.parse(join2.content[0].text);
+    expect(rejoined.agentId).toBe(bobId);
+
+    // whoami still resolves to the same agent, and bob can act in WS2.
+    const who = await handler.handle({ operation: 'whoami' }, 'sess-bob');
+    expect(JSON.parse(who.content[0].text).agentId).toBe(bobId);
+    const listed = await handler.handle(
+      { operation: 'list_proposals', workspaceId: ws2Id },
+      'sess-bob',
+    );
+    expect(listed.isError ?? false).toBe(false);
+
+    // Exactly one 'Bob' exists in the store — no orphan.
+    const bobs = (await hubStorage.getAgents()).filter((a) => a.name === 'Bob');
+    expect(bobs).toHaveLength(1);
+  });
 });

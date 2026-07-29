@@ -3,7 +3,17 @@
 Found during the phase-6 two-agent live smoke (2026-07-29), each verified
 against source and live server state, not just observed. Ordered by bite.
 
-## 1. `quickJoin` in an already-identified MCP session mints an orphan agent
+## 1. ~~`quickJoin` in an already-identified MCP session mints an orphan agent~~ FIXED
+
+**Fixed 2026-07-29** (same day it was found): the tool handler now passes the
+session's default identity into `quick_join`, and the handler reuses it when
+the requested `name` matches — joining the workspace as the caller instead of
+minting an orphan. A DIFFERENT name still mints a sub-agent (the sanctioned
+multi-agent flow, pinned by T-HTW-14), but the result now carries a `note`
+stating that the session default is unchanged and that acting as the new agent
+requires an explicit `agentId`. Pinned by `quick-join.test.ts` ("with an
+existing session identity") and `per-session-identity.test.ts`. Original
+report kept below for the record.
 
 `hub-handler.ts` places `quick_join` in the "Stage 0: no agent needed" branch,
 so `handle()`'s `agentId` parameter is never consulted: it unconditionally
@@ -53,6 +63,18 @@ callable by its discovered name.
 constructs channels with `id: problemId` — nothing enforces it at the storage
 boundary, so any future caller minting its own channel id silently splits
 read and write paths.
+
+## 5. Concurrent first registrations in one MCP session race for the default
+
+Two `register`/`quick_join` calls running concurrently in one session both
+resolve a null session default before either result is captured, so both mint
+agents; only the first-completed becomes the implicit identity, and the other
+caller's IMPLICIT calls silently act as it (explicit `agentId` calls work for
+both — every registration lands in the session registry). Pre-dates the
+quick_join reuse fix; surfaced by Greptile's concurrent repro on that PR.
+
+**Fix direction**: serialize registration per sessionKey in the tool handler
+(an async mutex around resolve-register-capture).
 
 ## Design note, not a defect: consensus markers are immutable
 
