@@ -154,6 +154,47 @@ describe('quick_join operation', () => {
       expect(status.agents.map((a: any) => a.agentId)).toContain(firstJoin.agentId);
     });
 
+    // Greptile P1/P2 on this PR: the reuse branch must not become a validation
+    // bypass — a supplied profile is validated exactly as register validates
+    // it, and supplied profile/clientInfo are persisted onto the existing
+    // agent rather than silently dropped.
+    it('still rejects an invalid profile on the reuse path', async () => {
+      await expect(
+        handler.handle(firstJoin.agentId, 'quick_join', {
+          name: 'Reviewer-1',
+          workspaceId: secondWorkspaceId,
+          profile: 'INVALID',
+        }),
+      ).rejects.toThrow(/Invalid profile 'INVALID'/);
+    });
+
+    it('persists a newly supplied profile and clientInfo when reusing', async () => {
+      const rejoin = await handler.handle(firstJoin.agentId, 'quick_join', {
+        name: 'Reviewer-1',
+        workspaceId: secondWorkspaceId,
+        profile: 'REVIEWER',
+        clientInfo: 'vitest-client',
+      }) as any;
+      expect(rejoin.agentId).toBe(firstJoin.agentId);
+
+      const stored = await storage.getAgent(firstJoin.agentId);
+      expect(stored?.profile).toBe('REVIEWER');
+      expect(stored?.clientInfo).toBe('vitest-client');
+    });
+
+    it('leaves stored metadata untouched when the re-join supplies none', async () => {
+      await handler.handle(firstJoin.agentId, 'quick_join', {
+        name: 'Reviewer-1',
+        workspaceId: secondWorkspaceId,
+        profile: 'ARCHITECT',
+      });
+      await handler.handle(firstJoin.agentId, 'quick_join', {
+        name: 'Reviewer-1',
+        workspaceId,
+      });
+      expect((await storage.getAgent(firstJoin.agentId))?.profile).toBe('ARCHITECT');
+    });
+
     it('is idempotent for the workspace already joined', async () => {
       const rejoin = await handler.handle(firstJoin.agentId, 'quick_join', {
         name: 'Reviewer-1',

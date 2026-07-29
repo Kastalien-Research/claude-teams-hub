@@ -12,7 +12,7 @@ import { createProblemsManager } from './problems.js';
 import { createProposalsManager } from './proposals.js';
 import { createConsensusManager } from './consensus.js';
 import { createChannelsManager } from './channels.js';
-import { getProfilePromptContent } from './profiles-registry.js';
+import { getProfilePromptContent, isValidProfile } from './profiles-registry.js';
 import type { ThoughtStoreForWorkspace } from './workspace.js';
 
 type ThoughtStore = ThoughtStoreForWorkspace & {
@@ -108,6 +108,23 @@ export function createHubHandler(
           // session default is unchanged, so the trap is visible.
           const existing = agentId ? await identity.getAgent(agentId) : null;
           const reused = existing !== null && existing.name === name;
+
+          // The reuse path must not become a validation bypass: a supplied
+          // profile is checked exactly as register checks it, and supplied
+          // profile/clientInfo are persisted onto the existing agent rather
+          // than silently dropped (Greptile P1/P2 on the fix PR).
+          if (reused && (profile !== undefined || clientInfo !== undefined)) {
+            if (profile !== undefined && !isValidProfile(profile)) {
+              const validProfiles = ['MANAGER', 'ARCHITECT', 'DEBUGGER', 'SECURITY', 'RESEARCHER', 'REVIEWER'];
+              throw new Error(`Invalid profile '${profile}'. Valid profiles: ${validProfiles.join(', ')}`);
+            }
+            const updated = {
+              ...existing,
+              ...(profile !== undefined ? { profile } : {}),
+              ...(clientInfo !== undefined ? { clientInfo } : {}),
+            };
+            await storage.saveAgent(updated);
+          }
 
           const reg = reused
             ? existing

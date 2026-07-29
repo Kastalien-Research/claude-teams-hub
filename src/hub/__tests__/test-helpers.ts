@@ -29,7 +29,14 @@ export function createInMemoryHubStorage(): HubStorage {
   return {
     // Agent operations
     async getAgents() { return [...agents]; },
-    async saveAgent(agent) { agents.push(agent); },
+    // Upsert, matching hub-storage-fs: a re-save of the same agentId replaces
+    // the record. The old append left a stale first record that getAgent's
+    // find() kept returning.
+    async saveAgent(agent) {
+      const idx = agents.findIndex(a => a.agentId === agent.agentId);
+      if (idx >= 0) agents[idx] = agent;
+      else agents.push(agent);
+    },
     async getAgent(agentId) { return agents.find(a => a.agentId === agentId) ?? null; },
 
     // Workspace operations
