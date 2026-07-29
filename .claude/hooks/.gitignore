@@ -1,0 +1,3 @@
+# Droppings from running the hook suite with this directory as pytest's rootdir.
+__pycache__/
+.pytest_cache/

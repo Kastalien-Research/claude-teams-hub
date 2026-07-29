@@ -15,6 +15,13 @@ dist/
 # MCP client configs may carry keys
 .mcp.json
 
+# Python test droppings (hooks suite)
+__pycache__/
+.pytest_cache/
+
+# Throwaway local hub state from probes/smokes
+.tmp-hubdata/
+
 # Logs and editor droppings
 *.log
 .DS_Store
