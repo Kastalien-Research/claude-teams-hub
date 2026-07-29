@@ -1,0 +1,165 @@
+import { describe, it, expect } from "vitest";
+import { SearchTool } from "../search-tool.js";
+import { buildSearchCatalog } from "../search-index.js";
+
+const catalog = buildSearchCatalog();
+const tool = new SearchTool(catalog);
+
+describe("thoughtbox_search", () => {
+  it("lists only the Code Mode operation modules", async () => {
+    const result = await tool.handle({
+      code: "async () => Object.keys(catalog.operations).sort()",
+    });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.error).toBeUndefined();
+    expect(output.result).toEqual([
+      "branch",
+      "claims",
+      "hub",
+      "knowledge",
+      // --- tb.merge (SPEC-MERGE-CORE) — owned by merge-core ---
+      "merge",
+      // --- end tb.merge ---
+      "notebook",
+      "observability",
+      "runbook",
+      "session",
+      "theseus",
+      "thought",
+      "ulysses",
+      // tb.vars.* — durable named session variables (RLM-lite)
+      "vars",
+    ]);
+  });
+
+  // --- tb.merge (SPEC-MERGE-CORE) — owned by merge-core ---
+  it("merge operations are discoverable in the catalog (no approve)", async () => {
+    const result = await tool.handle({
+      code: "async () => Object.keys(catalog.operations.merge).sort()",
+    });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.error).toBeUndefined();
+    // Approval is human-only via apps/web (SPEC-MERGE-CORE c4):
+    // exactly request/status/list/claim_diff, never an approve operation.
+    expect(output.result).toEqual(["claim_diff", "list", "request", "status"]);
+  });
+  // --- end tb.merge ---
+
+  it("claims operations are discoverable in the catalog", async () => {
+    const result = await tool.handle({
+      code: "async () => Object.keys(catalog.operations.claims).sort()",
+    });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.error).toBeUndefined();
+    expect(output.result).toHaveLength(11);
+    expect(output.result).toContain("assert");
+    expect(output.result).toContain("supersede");
+    expect(output.result).toContain("affected");
+    expect(output.result).toContain("verify");
+    expect(output.result).toContain("changed_since");
+  });
+
+  it("hub operations are discoverable in the catalog", async () => {
+    const result = await tool.handle({
+      code: "async () => Object.keys(catalog.operations.hub).sort()",
+    });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.error).toBeUndefined();
+    expect(output.result).toHaveLength(28);
+    expect(output.result).toContain("register");
+    expect(output.result).toContain("create_workspace");
+    expect(output.result).toContain("merge_proposal");
+    expect(output.result).toContain("workspace_digest");
+  });
+
+  it("filters operations by module", async () => {
+    const result = await tool.handle({
+      code: `async () => Object.keys(catalog.operations.session)`,
+    });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.result).toContain("session_list");
+    expect(output.result).toContain("session_get");
+  });
+
+  it("searches prompts by name", async () => {
+    const result = await tool.handle({
+      code: `async () => catalog.prompts.filter(p => p.name.includes('interleaved'))`,
+    });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.result.length).toBeGreaterThanOrEqual(1);
+    expect(output.result.some((p: { name: string }) => p.name === "interleaved-thinking")).toBe(true);
+  });
+
+  it("searches resources by URI pattern", async () => {
+    const result = await tool.handle({
+      code: `async () => catalog.resources.filter(r => r.uri.includes('operations'))`,
+    });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.result.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("returns resource templates", async () => {
+    const result = await tool.handle({
+      code: `async () => catalog.resourceTemplates.map(t => t.uriTemplate)`,
+    });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.result.length).toBeGreaterThan(0);
+    expect(output.result.some((t: string) => t.includes("{op}"))).toBe(true);
+  });
+
+  it("returns durationMs in response envelope", async () => {
+    const result = await tool.handle({
+      code: `async () => 42`,
+    });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.durationMs).toBeTypeOf("number");
+    expect(output.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("captures console.log in logs", async () => {
+    const result = await tool.handle({
+      code: `async () => { console.log("hello"); return "done"; }`,
+    });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.logs).toContain("hello");
+    expect(output.result).toBe("done");
+  });
+
+  it("blocks access to process", async () => {
+    const result = await tool.handle({
+      code: `async () => typeof process`,
+    });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.result).toBe("undefined");
+  });
+
+  it("returns truncated output instead of throwing on oversized results", async () => {
+    const result = await tool.handle({
+      code: `async () => ({ payload: "x".repeat(30000) })`,
+    });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.error).toBeUndefined();
+    expect(output.truncated).toBe(true);
+    expect(typeof output.result).toBe("string");
+    expect(output.result).toContain("[truncated]");
+  });
+
+  it("returns error for invalid code", async () => {
+    const result = await tool.handle({
+      code: `async () => { throw new Error("search failed"); }`,
+    });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.error).toBe("search failed");
+    expect(output.result).toBeNull();
+  });
+
+  it("catalog top-level is frozen (writes silently fail)", async () => {
+    const result = await tool.handle({
+      code: `async () => { catalog.newProp = "bad"; return catalog.newProp; }`,
+    });
+    const output = JSON.parse(result.content[0].text);
+    // Object.freeze in sloppy mode: assignment silently fails, property not added
+    // undefined serializes to null in JSON
+    expect(output.result).toBeNull();
+  });
+});

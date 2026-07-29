@@ -1,0 +1,600 @@
+/**
+ * Session Handlers
+ *
+ * Handler functions for each session operation.
+ */
+
+import {
+  type ThoughtboxStorage,
+  type Session,
+  type SessionFilter,
+  type ThoughtData,
+} from "../persistence/index.js";
+import { ThoughtHandler } from "../thought-handler.js";
+import { ThoughtQuery, type ThoughtQueryArgs } from "./thought-query.js";
+
+/**
+ * Session analysis result with objective metrics
+ * (session_analyze operation; moved here from persistence/types.ts)
+ */
+export interface SessionAnalysis {
+  sessionId: string;
+  metadata: {
+    title: string;
+    tags: string[] | undefined;
+    thoughtCount: number;
+    branchCount: number;
+    revisionCount: number;
+    duration: number;           // Milliseconds from first to last thought
+    createdAt: string;          // ISO 8601
+    lastUpdatedAt: string;      // ISO 8601
+  };
+  structure: {
+    linearityScore: number;     // 0-1, higher = more linear reasoning
+    revisionRate: number;       // Revisions / total thoughts
+    maxDepth: number;           // Count of distinct branch IDs
+    thoughtDensity: number;     // Thoughts per minute
+  };
+  quality: {
+    hasConvergence: boolean;    // Main chain continues after branches
+    isComplete: boolean;        // Final thought has nextThoughtNeeded: false
+  };
+}
+
+export interface SessionHandlerDeps {
+  storage: ThoughtboxStorage;
+  thoughtHandler: ThoughtHandler;
+}
+
+export class SessionHandlers {
+  private storage: ThoughtboxStorage;
+  private thoughtHandler: ThoughtHandler;
+  private thoughtQuery: ThoughtQuery;
+
+  constructor(deps: SessionHandlerDeps) {
+    this.storage = deps.storage;
+    this.thoughtHandler = deps.thoughtHandler;
+    this.thoughtQuery = new ThoughtQuery(deps.storage);
+  }
+
+  /**
+   * Structured thought-graph queries (folded SPEC-001 resource templates):
+   * by type, by range, by reference, or revision history.
+   */
+  async handleQueryThoughts(args: ThoughtQueryArgs) {
+    return this.thoughtQuery.query(args);
+  }
+
+  /**
+   * List sessions with optional filtering
+   */
+  async handleList(args: {
+    limit?: number;
+    offset?: number;
+    tags?: string[];
+  }): Promise<{
+    sessions: Session[];
+    count: number;
+    hasMore: boolean;
+  }> {
+    const limit = args.limit ?? 10;
+    const offset = args.offset ?? 0;
+
+    // Fetch one extra to detect hasMore
+    const filter: SessionFilter = {
+      limit: limit + 1,
+      offset,
+      tags: args.tags,
+    };
+
+    const sessions = await this.storage.listSessions(filter);
+    const hasMore = sessions.length > limit;
+    const returnSessions = hasMore ? sessions.slice(0, limit) : sessions;
+
+    return {
+      sessions: returnSessions,
+      count: returnSessions.length,
+      hasMore,
+    };
+  }
+
+  /**
+   * Get full session details including all thoughts
+   */
+  async handleGet(args: { sessionId: string }): Promise<{
+    session: Session;
+    thoughts: ThoughtData[];
+    branches: Record<string, ThoughtData[]>;
+  }> {
+    const session = await this.storage.getSession(args.sessionId);
+    if (!session) {
+      throw new Error(`Session ${args.sessionId} not found`);
+    }
+
+    const thoughts = await this.storage.getAllThoughts(args.sessionId);
+
+    // Group thoughts by branch
+    const branches: Record<string, ThoughtData[]> = {};
+    const mainThoughts: ThoughtData[] = [];
+
+    for (const thought of thoughts) {
+      if (thought.branchId) {
+        if (!branches[thought.branchId]) {
+          branches[thought.branchId] = [];
+        }
+        branches[thought.branchId].push(thought);
+      } else {
+        mainThoughts.push(thought);
+      }
+    }
+
+    // Update lastAccessedAt
+    try {
+      await this.storage.updateSession(args.sessionId, {
+        lastAccessedAt: new Date(),
+      });
+    } catch {
+      // Non-critical, ignore errors
+    }
+
+    return {
+      session,
+      thoughts: mainThoughts,
+      branches,
+    };
+  }
+
+  /**
+   * Search sessions by query
+   */
+  async handleSearch(args: {
+    query: string;
+    limit?: number;
+  }): Promise<{
+    sessions: Session[];
+    count: number;
+    query: string;
+  }> {
+    const sessions = await this.storage.listSessions({
+      search: args.query,
+      limit: args.limit ?? 10,
+    });
+
+    return {
+      sessions,
+      count: sessions.length,
+      query: args.query,
+    };
+  }
+
+  /**
+   * Resume a session - loads it into ThoughtHandler for continuation
+   */
+  async handleResume(args: { sessionId: string }): Promise<{
+    success: boolean;
+    sessionId: string;
+    session: Session;
+    thoughtCount: number;
+    lastThought: ThoughtData | null;
+    message: string;
+    restoration?: {
+      thoughtCount: number;
+      currentThoughtNumber: number;
+      branchCount: number;
+      nextThoughtNumber: number;
+    };
+  }> {
+    // Load session into ThoughtHandler
+    await this.thoughtHandler.loadSession(args.sessionId);
+
+    // SIL-103: Restore handler state (thoughtHistory, branches, currentSessionId)
+    let restoration: {
+      thoughtCount: number;
+      currentThoughtNumber: number;
+      branchCount: number;
+      nextThoughtNumber: number;
+    } | undefined;
+
+    try {
+      const restored = await this.thoughtHandler.restoreFromSession(
+        args.sessionId
+      );
+      restoration = {
+        thoughtCount: restored.thoughtCount,
+        currentThoughtNumber: restored.currentThoughtNumber,
+        branchCount: restored.branchCount,
+        nextThoughtNumber: restored.currentThoughtNumber + 1,
+      };
+    } catch (err) {
+      console.warn(
+        `[SIL-103] Session restoration failed for ${args.sessionId}:`,
+        (err as Error).message
+      );
+    }
+
+    // Get session details for response
+    const session = await this.storage.getSession(args.sessionId);
+    if (!session) {
+      throw new Error(`Session ${args.sessionId} not found`);
+    }
+
+    const thoughts = await this.storage.getThoughts(args.sessionId);
+    const lastThought =
+      thoughts.length > 0 ? thoughts[thoughts.length - 1] : null;
+
+    const nextThought = restoration
+      ? restoration.nextThoughtNumber
+      : thoughts.length + 1;
+
+    return {
+      success: true,
+      sessionId: args.sessionId,
+      session,
+      thoughtCount: thoughts.length,
+      lastThought,
+      message: `Session resumed. Continue reasoning from thought ${nextThought}. Use thoughtbox tool with thoughtNumber: ${nextThought} to continue.`,
+      ...(restoration && { restoration }),
+    };
+  }
+
+  /**
+   * Resume the most recently updated session in the current workspace.
+   * Convenience wrapper: list (sorted by updatedAt desc) then resume.
+   */
+  async handleResumeLatest(args: { tags?: string[] } = {}): Promise<
+    | Awaited<ReturnType<SessionHandlers["handleResume"]>>
+    | { success: false; message: string }
+  > {
+    const sessions = await this.storage.listSessions({
+      limit: 1,
+      sortBy: "updatedAt",
+      sortOrder: "desc",
+      tags: args.tags,
+    });
+    if (sessions.length === 0) {
+      return {
+        success: false,
+        message:
+          "No sessions found in this workspace. Start one with tb.thought({ thought, nextThoughtNeeded: true }).",
+      };
+    }
+    return this.handleResume({ sessionId: sessions[0].id });
+  }
+
+  /**
+   * Export a session to various formats
+   * SPEC-003: Includes cross-reference resolution
+   */
+  async handleExport(args: {
+    sessionId: string;
+    format?: "markdown" | "cipher" | "json";
+    includeMetadata?: boolean;
+    resolveAnchors?: boolean;
+  }): Promise<{
+    sessionId: string;
+    format: string;
+    content: string;
+  }> {
+    const format = args.format ?? "markdown";
+    const includeMetadata = args.includeMetadata ?? true;
+    const resolveAnchors = args.resolveAnchors ?? true;
+
+    const session = await this.storage.getSession(args.sessionId);
+    if (!session) {
+      throw new Error(`Session ${args.sessionId} not found`);
+    }
+
+    const thoughts = await this.storage.getThoughts(args.sessionId);
+
+    let content: string;
+
+    switch (format) {
+      case "json": {
+        // Use toLinkedExport to include full ThoughtNode[] with linkage (prev/next/revisesNode/branchOrigin)
+        // SPEC-002: Now includes revision metadata
+        const linkedExport = await this.storage.toLinkedExport(args.sessionId);
+
+        // SPEC-003: Resolve cross-session anchors if requested
+        if (resolveAnchors) {
+          const crossReferences = await this.resolveAnchors(linkedExport.nodes);
+          (linkedExport as any).crossReferences = crossReferences;
+        }
+
+        content = JSON.stringify(linkedExport, null, 2);
+        break;
+      }
+
+      case "cipher":
+        content = this.exportAsCipher(session, thoughts, includeMetadata);
+        break;
+
+      case "markdown":
+      default:
+        content = this.exportAsMarkdown(session, thoughts, includeMetadata);
+        break;
+    }
+
+    return {
+      sessionId: args.sessionId,
+      format,
+      content,
+    };
+  }
+
+  /**
+   * SPEC-003: Resolve all anchors in session thoughts
+   */
+  private async resolveAnchors(nodes: any[]): Promise<any> {
+    const { AnchorParser } = await import("../references/anchor-parser.js");
+    const { AnchorResolver } = await import("../references/anchor-resolver.js");
+
+    const parser = new AnchorParser();
+    // SPEC-003 D3: project-level aliases come from the storage backend.
+    // SPEC-003 REQ-008: resolution problems must not prevent export — a
+    // broken aliases file degrades to "no aliases configured" and the
+    // error is surfaced non-fatally in the crossReferences block.
+    let aliases: Record<string, string> | undefined;
+    let aliasConfigError: string | undefined;
+    try {
+      aliases = await this.storage.loadAliases();
+    } catch (error) {
+      aliasConfigError = error instanceof Error ? error.message : String(error);
+    }
+    const resolver = new AnchorResolver(this.storage, aliases);
+
+    const allAnchors = new Map<number, any[]>();
+
+    for (const node of nodes) {
+      const anchors = parser.parse(node.data.thought);
+      if (anchors.length > 0) {
+        const resolved = await Promise.all(
+          anchors.map((a: any) => resolver.resolve(a))
+        );
+        allAnchors.set(node.data.thoughtNumber, resolved);
+      }
+    }
+
+    // Summarize
+    const allResolved = Array.from(allAnchors.values()).flat();
+
+    return {
+      anchorsFound: allAnchors.size,
+      resolved: allResolved.filter((a: any) => a.status === "resolved").length,
+      ambiguous: allResolved.filter((a: any) => a.status === "ambiguous").length,
+      unresolved: allResolved.filter((a: any) => a.status === "unresolved").length,
+      details: Array.from(allAnchors.entries()).map(([thoughtNum, anchors]) => ({
+        thoughtNumber: thoughtNum,
+        anchors,
+      })),
+      ...(aliasConfigError !== undefined && { aliasConfigError }),
+    };
+  }
+
+  /**
+   * Export session as readable markdown
+   */
+  private exportAsMarkdown(
+    session: Session,
+    thoughts: ThoughtData[],
+    includeMetadata: boolean
+  ): string {
+    const lines: string[] = [];
+
+    if (includeMetadata) {
+      lines.push(`# ${session.title}`);
+      lines.push("");
+      if (session.tags && session.tags.length > 0) {
+        lines.push(`**Tags:** ${session.tags.join(", ")}`);
+      }
+      lines.push(`**Created:** ${session.createdAt}`);
+      lines.push(`**Thoughts:** ${thoughts.length}`);
+      lines.push("");
+      lines.push("---");
+      lines.push("");
+    }
+
+    // Group by branch
+    const mainThoughts = thoughts.filter((t) => !t.branchId);
+    const branchMap: Record<string, ThoughtData[]> = {};
+
+    for (const t of thoughts) {
+      if (t.branchId) {
+        if (!branchMap[t.branchId]) {
+          branchMap[t.branchId] = [];
+        }
+        branchMap[t.branchId].push(t);
+      }
+    }
+
+    // Main thoughts
+    lines.push("## Main Thread");
+    lines.push("");
+    for (const t of mainThoughts) {
+      const prefix = t.isRevision ? `[R${t.revisesThought}]` : "";
+      lines.push(`### Thought ${t.thoughtNumber}/${t.totalThoughts} ${prefix}`);
+      lines.push("");
+      lines.push(t.thought);
+      lines.push("");
+    }
+
+    // Branches
+    for (const [branchId, branchThoughts] of Object.entries(branchMap)) {
+      lines.push(`## Branch: ${branchId}`);
+      lines.push("");
+      for (const t of branchThoughts) {
+        lines.push(`### Thought ${t.thoughtNumber}/${t.totalThoughts}`);
+        lines.push("");
+        lines.push(t.thought);
+        lines.push("");
+      }
+    }
+
+    return lines.join("\n");
+  }
+
+  /**
+   * Export session using cipher notation for compression
+   */
+  private exportAsCipher(
+    session: Session,
+    thoughts: ThoughtData[],
+    includeMetadata: boolean
+  ): string {
+    const lines: string[] = [];
+
+    if (includeMetadata) {
+      lines.push(`# ${session.title}`);
+      lines.push(`T:${session.tags?.join(",") || ""} N:${thoughts.length}`);
+      lines.push("");
+    }
+
+    // Use cipher-style compression
+    // H = Hypothesis, E = Evidence, C = Conclusion, Q = Question
+    // R = Revision, B = Branch, P = Progress, X = Synthesis
+
+    for (const t of thoughts) {
+      const num = `[${t.thoughtNumber}/${t.totalThoughts}]`;
+      const branch = t.branchId ? `B:${t.branchId}` : "";
+      const revision = t.isRevision ? `R${t.revisesThought}` : "";
+      const prefix = [num, branch, revision].filter(Boolean).join(" ");
+
+      // Compress thought - first 200 chars with key marker if detectable
+      const compressed = this.compressThought(t.thought);
+      lines.push(`${prefix} ${compressed}`);
+    }
+
+    return lines.join("\n");
+  }
+
+  /**
+   * Compress a thought using cipher-style notation
+   */
+  private compressThought(thought: string): string {
+    // Detect thought type from content
+    const lower = thought.toLowerCase();
+    let marker = "";
+
+    if (lower.includes("hypothesis") || lower.includes("assume")) {
+      marker = "H:";
+    } else if (lower.includes("evidence") || lower.includes("found") || lower.includes("observed")) {
+      marker = "E:";
+    } else if (lower.includes("conclusion") || lower.includes("therefore") || lower.includes("thus")) {
+      marker = "C:";
+    } else if (lower.includes("question") || lower.includes("?")) {
+      marker = "Q:";
+    } else if (lower.includes("synthesis") || lower.includes("combining")) {
+      marker = "X:";
+    }
+
+    // Take first 150 chars, clean up
+    const truncated = thought.substring(0, 150).replace(/\n/g, " ").trim();
+    const suffix = thought.length > 150 ? "..." : "";
+
+    return `${marker}${truncated}${suffix}`;
+  }
+
+  /**
+   * Analyze session structure and quality metrics
+   */
+  async handleAnalyze(args: { sessionId: string }): Promise<SessionAnalysis> {
+    const session = await this.storage.getSession(args.sessionId);
+    if (!session) {
+      throw new Error(`Session ${args.sessionId} not found`);
+    }
+
+    const thoughts = await this.storage.getThoughts(args.sessionId);
+
+    if (thoughts.length === 0) {
+      return {
+        sessionId: args.sessionId,
+        metadata: {
+          title: session.title,
+          tags: session.tags,
+          thoughtCount: 0,
+          branchCount: session.branchCount,
+          revisionCount: 0,
+          duration: 0,
+          createdAt: session.createdAt.toISOString(),
+          lastUpdatedAt: session.updatedAt.toISOString(),
+        },
+        structure: {
+          linearityScore: 1,
+          revisionRate: 0,
+          maxDepth: 0,
+          thoughtDensity: 0,
+        },
+        quality: {
+          hasConvergence: false,
+          isComplete: false,
+        },
+      };
+    }
+
+    // Compute objective metrics
+    const revisionCount = thoughts.filter((t) => t.isRevision).length;
+    const branchThoughts = thoughts.filter((t) => t.branchFromThought);
+
+    // Duration: first to last thought
+    const timestamps = thoughts
+      .map((t) => new Date(t.timestamp).getTime())
+      .filter((t) => !isNaN(t));
+    const duration = timestamps.length > 1
+      ? Math.max(...timestamps) - Math.min(...timestamps)
+      : 0;
+
+    // Linearity: 1 if no branches/revisions, decreases with complexity
+    const complexityFactors = revisionCount + branchThoughts.length;
+    const linearityScore = Math.max(0, 1 - (complexityFactors / thoughts.length));
+
+    // Revision rate
+    const revisionRate = thoughts.length > 0 ? revisionCount / thoughts.length : 0;
+
+    // Max depth: count distinct branch IDs
+    const branchIds = new Set(thoughts.filter((t) => t.branchId).map((t) => t.branchId));
+    const maxDepth = branchIds.size;
+
+    // Thought density: thoughts per minute
+    const durationMinutes = duration / 60000;
+    const thoughtDensity = durationMinutes > 0 ? thoughts.length / durationMinutes : 0;
+
+    // Quality indicators
+    const lastThought = thoughts[thoughts.length - 1];
+
+    // True convergence: main-chain thoughts exist AFTER branch thoughts
+    let lastBranchIndex = -1;
+    for (let i = thoughts.length - 1; i >= 0; i--) {
+      if (thoughts[i].branchId) {
+        lastBranchIndex = i;
+        break;
+      }
+    }
+    const hasMainAfterBranch = lastBranchIndex >= 0 &&
+      thoughts.slice(lastBranchIndex + 1).some((t) => !t.branchId);
+    const hasConvergence = hasMainAfterBranch;
+    const isComplete = !lastThought.nextThoughtNeeded;
+
+    return {
+      sessionId: args.sessionId,
+      metadata: {
+        title: session.title,
+        tags: session.tags,
+        thoughtCount: thoughts.length,
+        branchCount: session.branchCount,
+        revisionCount,
+        duration,
+        createdAt: session.createdAt.toISOString(),
+        lastUpdatedAt: session.updatedAt.toISOString(),
+      },
+      structure: {
+        linearityScore: Math.round(linearityScore * 100) / 100,
+        revisionRate: Math.round(revisionRate * 100) / 100,
+        maxDepth,
+        thoughtDensity: Math.round(thoughtDensity * 100) / 100,
+      },
+      quality: {
+        hasConvergence,
+        isComplete,
+      },
+    };
+  }
+}

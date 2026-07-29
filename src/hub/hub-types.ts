@@ -1,0 +1,276 @@
+/**
+ * MCP Hub Type Definitions
+ *
+ * All hub-specific types from ADR-002 Section 1 (Data Model).
+ * These types define the multi-agent coordination layer.
+ */
+
+// =============================================================================
+// 1.1 Agent Identity
+// =============================================================================
+
+export interface AgentIdentity {
+  agentId: string;
+  name: string;
+  role: 'coordinator' | 'contributor';
+  profile?: string; // SPEC-HUB-002: Agent profile name (e.g., 'MANAGER', 'DEBUGGER')
+  clientInfo?: string;
+  registeredAt: string; // ISO 8601
+}
+
+// =============================================================================
+// 1.3 Workspace
+// =============================================================================
+
+export interface Workspace {
+  id: string;
+  name: string;
+  description: string;
+  createdBy: string; // agentId of coordinator
+  mainSessionId: string;
+  agents: WorkspaceAgent[];
+  createdAt: string; // ISO 8601
+  updatedAt: string;
+}
+
+export interface WorkspaceAgent {
+  agentId: string;
+  role: 'coordinator' | 'contributor';
+  joinedAt: string;
+  status: 'online' | 'offline';
+  lastSeenAt: string;
+  currentWork?: string; // Problem ID they're working on
+}
+
+// =============================================================================
+// 1.4 Problem
+// =============================================================================
+
+export type ProblemStatus = 'open' | 'in-progress' | 'resolved' | 'closed';
+
+export interface Problem {
+  id: string;
+  workspaceId: string;
+  title: string;
+  description: string;
+  createdBy: string; // agentId
+  assignedTo?: string; // agentId who claimed it
+  status: ProblemStatus;
+  branchId?: string;
+  branchFromThought?: number;
+  resolution?: string;
+  dependsOn?: string[]; // Problem IDs this problem depends on
+  parentId?: string; // Parent problem ID (sub-problem hierarchy)
+  comments: Comment[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Comment {
+  id: string;
+  agentId: string;
+  content: string;
+  createdAt: string;
+}
+
+// =============================================================================
+// 1.5 Proposal
+// =============================================================================
+
+export type ProposalStatus = 'open' | 'reviewing' | 'merged' | 'rejected';
+
+export interface Proposal {
+  id: string;
+  workspaceId: string;
+  title: string;
+  description: string;
+  createdBy: string; // agentId
+  sourceBranch: string;
+  problemId?: string;
+  status: ProposalStatus;
+  reviews: Review[];
+  mergeThoughtNumber?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// =============================================================================
+// 1.6 Review
+// =============================================================================
+
+export type ReviewVerdict = 'approve' | 'request-changes' | 'comment';
+
+export interface Review {
+  id: string;
+  proposalId: string;
+  reviewerId: string; // agentId
+  verdict: ReviewVerdict;
+  reasoning: string;
+  thoughtRefs?: number[];
+  createdAt: string;
+}
+
+// =============================================================================
+// 1.7 Consensus Marker
+// =============================================================================
+
+export interface ConsensusMarker {
+  id: string;
+  workspaceId: string;
+  name: string;
+  description: string;
+  thoughtRef: number;
+  branchId?: string;
+  agreedBy: string[]; // agentIds
+  createdAt: string;
+}
+
+// =============================================================================
+// 1.8 Channel
+// =============================================================================
+
+export interface Channel {
+  id: string;
+  workspaceId: string;
+  problemId: string;
+  messages: ChannelMessage[];
+}
+
+export interface ChannelMessage {
+  id: string;
+  agentId: string;
+  content: string;
+  timestamp: string; // ISO 8601
+  ref?: {
+    sessionId?: string;
+    thoughtNumber?: number;
+    branchId?: string;
+  };
+}
+
+// =============================================================================
+// Hub Operation Types (from ADR Section 2)
+// =============================================================================
+
+export type HubOperation =
+  // Identity
+  | 'register'
+  | 'whoami'
+  // Workspaces
+  | 'create_workspace'
+  | 'join_workspace'
+  | 'list_workspaces'
+  | 'workspace_status'
+  // Problems
+  | 'create_problem'
+  | 'claim_problem'
+  | 'update_problem'
+  | 'list_problems'
+  // Proposals
+  | 'create_proposal'
+  | 'review_proposal'
+  | 'merge_proposal'
+  | 'list_proposals'
+  // Consensus
+  | 'mark_consensus'
+  | 'endorse_consensus'
+  | 'list_consensus'
+  // Dependencies & Sub-problems
+  | 'add_dependency'
+  | 'remove_dependency'
+  | 'ready_problems'
+  | 'blocked_problems'
+  | 'create_sub_problem'
+  // Channels
+  | 'post_message'
+  | 'read_channel'
+  | 'post_system_message'
+  // Profiles (SPEC-HUB-002)
+  | 'get_profile_prompt'
+  // Agent Teams bootstrap
+  | 'quick_join'
+  | 'workspace_digest';
+
+// =============================================================================
+// Progressive Disclosure Stages (from ADR Section 6)
+// =============================================================================
+
+export type DisclosureStage = 0 | 1 | 2;
+
+/** Operations available at each disclosure stage */
+export const STAGE_OPERATIONS: Record<DisclosureStage, HubOperation[]> = {
+  0: ['register', 'list_workspaces', 'quick_join'],
+  1: ['whoami', 'create_workspace', 'join_workspace', 'get_profile_prompt'],
+  2: [
+    'create_problem', 'claim_problem', 'update_problem', 'list_problems',
+    'add_dependency', 'remove_dependency', 'ready_problems', 'blocked_problems', 'create_sub_problem',
+    'create_proposal', 'review_proposal', 'merge_proposal', 'list_proposals',
+    'mark_consensus', 'endorse_consensus', 'list_consensus',
+    'post_message', 'read_channel', 'post_system_message',
+    'workspace_status', 'workspace_digest',
+  ],
+};
+
+// =============================================================================
+// Hub Storage Interface Extension
+// =============================================================================
+
+/**
+ * Storage operations needed by the hub layer.
+ * Extends the existing ThoughtboxStorage with hub-specific persistence.
+ *
+ * Append-heavy children (reviews, endorsements, channel messages) have
+ * dedicated append operations so concurrent writers on different server
+ * instances never lose appends (SPEC-V1-INITIATIVE:c11). `save*` on the
+ * parent aggregates must not be used to append children.
+ */
+export interface HubStorage {
+  // Agent registry
+  getAgents(): Promise<AgentIdentity[]>;
+  saveAgent(agent: AgentIdentity): Promise<void>;
+  getAgent(agentId: string): Promise<AgentIdentity | null>;
+
+  // Workspace operations
+  getWorkspace(workspaceId: string): Promise<Workspace | null>;
+  saveWorkspace(workspace: Workspace): Promise<void>;
+  listWorkspaces(): Promise<Workspace[]>;
+
+  // Problem operations
+  getProblem(workspaceId: string, problemId: string): Promise<Problem | null>;
+  saveProblem(problem: Problem): Promise<void>;
+  listProblems(workspaceId: string): Promise<Problem[]>;
+
+  // Proposal operations
+  getProposal(workspaceId: string, proposalId: string): Promise<Proposal | null>;
+  saveProposal(proposal: Proposal): Promise<void>;
+  listProposals(workspaceId: string): Promise<Proposal[]>;
+
+  /**
+   * Appends a review to a proposal and transitions its status to
+   * 'reviewing'. Concurrency-safe: concurrent appends from different
+   * writers must all be retained.
+   */
+  appendReview(workspaceId: string, proposalId: string, review: Review): Promise<void>;
+
+  // Consensus operations
+  getConsensusMarker(workspaceId: string, markerId: string): Promise<ConsensusMarker | null>;
+  saveConsensusMarker(marker: ConsensusMarker): Promise<void>;
+  listConsensusMarkers(workspaceId: string): Promise<ConsensusMarker[]>;
+
+  /**
+   * Records an endorsement on a consensus marker. Idempotent per
+   * (markerId, agentId); concurrent endorsements must all be retained.
+   */
+  appendEndorsement(workspaceId: string, markerId: string, agentId: string): Promise<void>;
+
+  // Channel operations
+  getChannel(workspaceId: string, problemId: string): Promise<Channel | null>;
+  saveChannel(channel: Channel): Promise<void>;
+
+  /**
+   * Appends a message to a problem's channel and returns the channel's
+   * message count after the append. Concurrent appends from different
+   * writers must all be retained. Throws if the channel does not exist.
+   */
+  appendMessage(workspaceId: string, problemId: string, message: ChannelMessage): Promise<number>;
+}

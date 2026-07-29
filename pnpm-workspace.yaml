@@ -1,0 +1,10 @@
+# Marks this directory as its own pnpm workspace root. Without this file pnpm
+# walks up to the parent repo's workspace (recruiter-sourcing), resolves
+# against ITS tree, and installs nothing here — observed on first install,
+# 2026-07-29.
+#
+# esbuild is the only dependency with a build script (vitest cannot transform
+# without its platform binary); pnpm refuses to run build scripts not listed
+# here.
+allowBuilds:
+  esbuild: true

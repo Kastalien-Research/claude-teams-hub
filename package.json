@@ -1,0 +1,38 @@
+{
+  "name": "@kastalien-research/team-hub",
+  "version": "0.1.0",
+  "description": "Multi-agent collaboration hub for Claude Agent Teams: workspaces, problems, proposals, consensus, channels, and a transitional thought ledger, served over two Code Mode MCP tools with a live SSE event stream.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.18.0",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "clean": "shx rm -rf dist",
+    "build": "pnpm check:cycles && pnpm build:local",
+    "build:local": "pnpm clean && tsc && shx chmod +x dist/*.js",
+    "start": "node dist/index.js",
+    "watch": "tsc --watch",
+    "test": "pnpm build:local && vitest run",
+    "check:types": "tsc --noEmit",
+    "check:lint": "oxlint -c oxlint.json src/",
+    "check:cycles": "./scripts/check-cycles.sh",
+    "check:event-types": "tsx scripts/check-event-type-parity.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "express": "5.1.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.5",
+    "@types/node": "22.18.12",
+    "madge": "8.0.0",
+    "oxlint": "1.56.0",
+    "shx": "0.3.4",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "vitest": "4.0.18"
+  }
+}
