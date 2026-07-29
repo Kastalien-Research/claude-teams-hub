@@ -23,6 +23,6 @@ export type {
 export type {
   ThoughtboxEvent,
   HubEventType,
-  ProtocolEventType,
+  ThoughtEventType,
   OnThoughtboxEvent,
 } from './types.js';

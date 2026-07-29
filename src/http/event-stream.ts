@@ -4,7 +4,7 @@ import type { ThoughtboxEvent } from "../events/types.js";
 interface SseClient {
   res: Response;
   workspaceId: string;
-  sourceFilter: "all" | "hub" | "protocol";
+  sourceFilter: "all" | "hub" | "thought";
 }
 
 export interface EventStreamSurface {
@@ -18,7 +18,12 @@ export function createEventStreamSurface(): EventStreamSurface {
   function broadcast(event: ThoughtboxEvent): void {
     const payload = `data: ${JSON.stringify(event)}\n\n`;
     for (const client of clients) {
+      // An event carrying workspaceId '*' precedes workspace membership
+      // (agent_registered fires before the agent has joined anything), so it
+      // has no workspace to be scoped to and reaches every client — otherwise
+      // a dashboard watching one workspace would never see agents appear.
       const workspaceMatch =
+        event.workspaceId === "*" ||
         client.workspaceId === "*" ||
         client.workspaceId === event.workspaceId;
       const sourceMatch =
@@ -40,7 +45,7 @@ export function createEventStreamSurface(): EventStreamSurface {
       const workspaceId =
         (req.query.workspace_id as string) || "*";
       const sourceFilter =
-        (req.query.source as "all" | "hub" | "protocol") ||
+        (req.query.source as "all" | "hub" | "thought") ||
         "all";
 
       res.writeHead(200, {

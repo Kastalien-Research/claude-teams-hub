@@ -26,6 +26,8 @@ import {
 } from "./hub/thought-store-adapter.js";
 import { createHubApiSurface, shouldWarnOnExposedLocalMode } from "./http/hub-http.js";
 import { createEventStreamSurface } from "./http/event-stream.js";
+import { DASHBOARD_HTML } from "./http/dashboard.js";
+import { thoughtEmitter } from "./events/thought-emitter.js";
 
 const SERVER_VERSION = "0.1.0";
 
@@ -135,11 +137,29 @@ async function startHttpServer() {
     });
   };
 
-  // PHASE-4: thoughtEmitter (thought:added / thought:revised / thought:branched)
-  // is NOT bridged to the event stream yet. ThoughtboxEvent's `source` union is
-  // 'hub' | 'protocol', and labelling thought events as 'hub' would corrupt the
-  // SSE source filter. The event vocabulary gets a 'thought' source in phase 4;
-  // wire the bridge then.
+  // Bridge the in-process ThoughtEmitter onto the same SSE stream under the
+  // 'thought' source. All three emitter shapes collapse to one event type; the
+  // variant travels in `data.kind`. Thought events belong to the local
+  // workspace — the emitter is process-wide and carries no workspace of its own.
+  const bridgeThought = (kind: 'added' | 'revised' | 'branched') =>
+    (payload: { sessionId: string; thought: { thoughtNumber: number; thoughtType?: string } }) => {
+      eventStream.broadcast({
+        source: 'thought',
+        type: 'thought_recorded',
+        workspaceId: LOCAL_WORKSPACE_ID,
+        timestamp: new Date().toISOString(),
+        data: {
+          sessionId: payload.sessionId,
+          thoughtNumber: payload.thought.thoughtNumber,
+          thoughtType: payload.thought.thoughtType,
+          kind,
+        },
+      });
+    };
+
+  thoughtEmitter.on('thought:added', bridgeThought('added'));
+  thoughtEmitter.on('thought:revised', bridgeThought('revised'));
+  thoughtEmitter.on('thought:branched', bridgeThought('branched'));
 
   app.all("/mcp", async (req: Request, res: Response) => {
     const mcpSessionId = req.headers["mcp-session-id"] as string | undefined;
@@ -220,9 +240,15 @@ async function startHttpServer() {
       workspaceId: LOCAL_WORKSPACE_ID,
       dataDir,
       tools: ["thoughtbox_search", "thoughtbox_execute"],
-      endpoints: ["/mcp", "/hub/api", "/events", "/health", "/info"],
+      endpoints: ["/mcp", "/hub/api", "/events", "/dashboard", "/health", "/info"],
     })
   );
+
+  // Live team dashboard — a single self-contained page that consumes /events.
+  app.get("/dashboard", (_: Request, res: Response) => {
+    res.set("Content-Type", "text/html; charset=utf-8");
+    res.send(DASHBOARD_HTML);
+  });
 
   // Hub HTTP surface (`POST /hub/api`) for non-MCP clients, plus the SSE
   // event stream (`GET /events`). The hub handler's thought store is the same
@@ -233,7 +259,7 @@ async function startHttpServer() {
     localHubThoughtStore,
     broadcastHubEvent,
   );
-  createHubApiSurface(hubHandler).mount(app);
+  createHubApiSurface(hubHandler, hubStorage).mount(app);
   eventStream.mount(app);
 
   const httpServer = app.listen(port, () => {

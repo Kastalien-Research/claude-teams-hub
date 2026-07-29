@@ -21,8 +21,17 @@ type ThoughtStore = ThoughtStoreForWorkspace & {
   getThoughtCount(sessionId: string): Promise<number>;
 };
 
+/**
+ * Hub events surfaced to the caller's onEvent sink.
+ *
+ * This union must stay in parity with `HubEventType` in src/events/types.ts —
+ * `pnpm check:event-types` fails the build when it drifts.
+ *
+ * `workspaceId` is `'*'` for events that precede workspace membership
+ * (agent_registered); the event stream delivers those to every client.
+ */
 export interface HubEvent {
-  type: 'problem_created' | 'problem_status_changed' | 'message_posted' | 'proposal_created' | 'proposal_merged' | 'consensus_marked' | 'workspace_created';
+  type: 'problem_created' | 'problem_status_changed' | 'message_posted' | 'proposal_created' | 'proposal_merged' | 'consensus_marked' | 'workspace_created' | 'agent_registered' | 'workspace_joined' | 'problem_claimed' | 'proposal_reviewed';
   workspaceId: string;
   data: Record<string, unknown>;
 }
@@ -63,7 +72,17 @@ export function createHubHandler(
       // Stage 0: register, list_workspaces, quick_join — no agent needed
       if (requiredStage === 0) {
         if (operation === 'register') {
-          return identity.register(args as any);
+          const reg = await identity.register(args as any);
+          emit({
+            type: 'agent_registered',
+            workspaceId: '*',
+            data: {
+              agentId: reg.agentId,
+              name: reg.name,
+              ...(args?.profile ? { profile: args.profile } : {}),
+            },
+          });
+          return reg;
         }
         if (operation === 'list_workspaces') {
           return workspace.listWorkspaces();
@@ -80,9 +99,23 @@ export function createHubHandler(
 
           // 1. Register
           const reg = await identity.register({ name, clientInfo, profile });
+          emit({
+            type: 'agent_registered',
+            workspaceId: '*',
+            data: {
+              agentId: reg.agentId,
+              name: reg.name,
+              ...(profile ? { profile } : {}),
+            },
+          });
 
           // 2. Join workspace
           const joinResult = await workspace.joinWorkspace(reg.agentId, { workspaceId: wsId });
+          emit({
+            type: 'workspace_joined',
+            workspaceId: wsId,
+            data: { agentId: reg.agentId, name: reg.name, workspaceId: wsId },
+          });
 
           return {
             agentId: reg.agentId,
@@ -124,7 +157,17 @@ export function createHubHandler(
           return result;
         }
         if (operation === 'join_workspace') {
-          return workspace.joinWorkspace(agentId, args as any);
+          const joinResult = await workspace.joinWorkspace(agentId, args as any);
+          emit({
+            type: 'workspace_joined',
+            workspaceId: joinResult.workspace.id,
+            data: {
+              agentId,
+              name: agent.name,
+              workspaceId: joinResult.workspace.id,
+            },
+          });
+          return joinResult;
         }
         if (operation === 'get_profile_prompt') {
           const profileName = args.profile as string | undefined;
@@ -178,7 +221,13 @@ export function createHubHandler(
               const agentSlug = (agent?.name ?? agentId ?? 'unknown').toLowerCase().replace(/[^a-z0-9-]/g, '-');
               claimArgs.branchId = `${agentSlug}/${claimArgs.problemId}`;
             }
-            return problems.claimProblem(agentId, claimArgs as any);
+            result = await problems.claimProblem(agentId, claimArgs as any);
+            emit({ type: 'problem_claimed', workspaceId, data: {
+              problemId: claimArgs.problemId,
+              agentId,
+              ...(claimArgs.branchId ? { branchId: claimArgs.branchId } : {}),
+            } });
+            return result;
           }
           case 'update_problem': {
             const prevProblem = await storage.getProblem(workspaceId, args.problemId);
@@ -216,7 +265,13 @@ export function createHubHandler(
             } });
             return result;
           case 'review_proposal':
-            return proposals.reviewProposal(agentId, args as any);
+            result = await proposals.reviewProposal(agentId, args as any);
+            emit({ type: 'proposal_reviewed', workspaceId, data: {
+              proposalId: args.proposalId,
+              verdict: args.verdict,
+              agentId,
+            } });
+            return result;
           case 'merge_proposal': {
             result = await proposals.mergeProposal(agentId, args as any);
             const mergedProposal = (result as any).proposal;

@@ -1,17 +1,23 @@
 #!/usr/bin/env tsx
 /**
- * Code ↔ DB invariant check for `protocol_history.event_type`.
+ * Code ↔ code invariant check for the hub event vocabulary.
  *
- * The bug this guards against: the handler emits a new event_type value, but
- * the live CHECK constraint hasn't been extended, so the insert fails at
- * runtime. (commit d764ae6 — `fix(ulysses): allow validator history events`.)
+ * The bug this guards against: hub-handler.ts starts emitting a new event
+ * type, but `HubEventType` in the shared vocabulary is never extended — so the
+ * SSE stream carries a type no consumer has a case for, and nothing fails
+ * until a dashboard silently drops the event.
  *
- * Invariant: every `event_type: 'literal'` produced by src/protocol/handler.ts
- * must appear in the live `protocol_history_event_type_check` constraint.
+ * Upstream (Thoughtbox) this same check ran against a live Postgres CHECK
+ * constraint on `protocol_history.event_type`. Team Hub has no database and no
+ * protocol table; the authority is now src/events/types.ts, so the check is
+ * purely static and needs no credentials.
  *
- * Requires:
- *   SUPABASE_ACCESS_TOKEN - personal access token from supabase.com/dashboard/account/tokens
- *   SUPABASE_PROJECT_REF  - project to query (defaults to production)
+ * Invariants:
+ *   1. hub-handler.ts's local `HubEvent['type']` union === `HubEventType`.
+ *   2. Every literal emitted via `emit({ type: '...' })` is in that union.
+ *   3. `ThoughtEventType` members are NOT hub events — thought_recorded rides
+ *      the same stream under source 'thought' and must not leak into the hub
+ *      union, which would let it bypass the hub source filter.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -20,104 +26,132 @@ import path from 'node:path';
 import process from 'node:process';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const HANDLER_PATH = path.join(PROJECT_ROOT, 'src/protocol/handler.ts');
-const CONSTRAINT_NAME = 'protocol_history_event_type_check';
-const DEFAULT_PROJECT_REF = 'akjccuoncxlvrrtkvtno';
+const TYPES_PATH = path.join(PROJECT_ROOT, 'src/events/types.ts');
+const HANDLER_PATH = path.join(PROJECT_ROOT, 'src/hub/hub-handler.ts');
 
-interface QueryResponse {
-  result?: Array<{ def: string }>;
-}
-
-async function querySupabase(projectRef: string, token: string, sql: string): Promise<QueryResponse> {
-  const res = await fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ query: sql }),
-  });
-  if (!res.ok) {
-    throw new Error(`Supabase query failed: ${res.status} ${await res.text()}`);
-  }
-  const body = (await res.json()) as unknown;
-  if (Array.isArray(body)) {
-    return { result: body as Array<{ def: string }> };
-  }
-  return body as QueryResponse;
-}
-
-function extractEmittedLiterals(source: string): Set<string> {
-  const emitted = new Set<string>();
-  const pattern = /event_type:\s*['"]([^'"]+)['"]/g;
+/** Collect every single-quoted literal in a source slice. */
+function literalsIn(slice: string): Set<string> {
+  const found = new Set<string>();
+  const pattern = /'([^']+)'/g;
   let match: RegExpExecArray | null;
-  while ((match = pattern.exec(source)) !== null) {
-    emitted.add(match[1]);
+  while ((match = pattern.exec(slice)) !== null) {
+    found.add(match[1]!);
+  }
+  return found;
+}
+
+/** Extract the members of `export type <name> = 'a' | 'b';`. */
+function extractTypeAlias(source: string, name: string, file: string): Set<string> {
+  const start = source.indexOf(`export type ${name} =`);
+  if (start === -1) {
+    fail(`could not find 'export type ${name}' in ${file}`);
+  }
+  const end = source.indexOf(';', start);
+  if (end === -1) {
+    fail(`unterminated 'export type ${name}' declaration in ${file}`);
+  }
+  return literalsIn(source.slice(start, end));
+}
+
+/**
+ * Extract the `type:` union from `export interface HubEvent { ... }`.
+ * Returns both the union members and the interface slice, so the caller can
+ * exclude the declaration when scanning for emitted literals.
+ */
+function extractHubEventUnion(source: string): { members: Set<string>; declEnd: number } {
+  const start = source.indexOf('export interface HubEvent {');
+  if (start === -1) {
+    fail(`could not find 'export interface HubEvent' in ${HANDLER_PATH}`);
+  }
+  const typeStart = source.indexOf('type:', start);
+  const typeEnd = source.indexOf(';', typeStart);
+  if (typeStart === -1 || typeEnd === -1) {
+    fail(`could not parse the 'type:' union of HubEvent in ${HANDLER_PATH}`);
+  }
+  return { members: literalsIn(source.slice(typeStart, typeEnd)), declEnd: typeEnd };
+}
+
+/** Extract literals from `emit({ type: '...' })` call sites. */
+function extractEmittedLiterals(source: string, afterOffset: number): Set<string> {
+  const emitted = new Set<string>();
+  const pattern = /emit\(\{\s*type:\s*'([^']+)'/g;
+  const body = source.slice(afterOffset);
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(body)) !== null) {
+    emitted.add(match[1]!);
   }
   return emitted;
 }
 
-function extractAllowedLiterals(constraintDef: string): Set<string> {
-  const allowed = new Set<string>();
-  const pattern = /'([^']+)'::text/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(constraintDef)) !== null) {
-    allowed.add(match[1]);
-  }
-  return allowed;
+function fail(message: string): never {
+  console.error(`error: ${message}`);
+  process.exit(2);
+}
+
+function sorted(values: Iterable<string>): string[] {
+  return [...values].sort();
 }
 
 async function main(): Promise<void> {
-  const token = process.env.SUPABASE_ACCESS_TOKEN;
-  if (!token) {
-    console.error('error: SUPABASE_ACCESS_TOKEN is required');
-    process.exit(2);
-  }
-  const projectRef = process.env.SUPABASE_PROJECT_REF ?? DEFAULT_PROJECT_REF;
+  const typesSource = await readFile(TYPES_PATH, 'utf8');
+  const handlerSource = await readFile(HANDLER_PATH, 'utf8');
 
-  const source = await readFile(HANDLER_PATH, 'utf8');
-  const emitted = extractEmittedLiterals(source);
-  if (emitted.size === 0) {
-    console.error(`error: no event_type literals found in ${HANDLER_PATH}`);
-    process.exit(2);
-  }
+  const vocabulary = extractTypeAlias(typesSource, 'HubEventType', TYPES_PATH);
+  const thoughtVocabulary = extractTypeAlias(typesSource, 'ThoughtEventType', TYPES_PATH);
+  const { members: handlerUnion, declEnd } = extractHubEventUnion(handlerSource);
+  const emitted = extractEmittedLiterals(handlerSource, declEnd);
 
-  const constraintQuery = `
-    SELECT pg_get_constraintdef(oid) AS def
-    FROM pg_constraint
-    WHERE conrelid = 'public.protocol_history'::regclass
-      AND conname = '${CONSTRAINT_NAME}'
-  `;
-  const response = await querySupabase(projectRef, token, constraintQuery);
-  const def = response.result?.[0]?.def;
-  if (!def) {
-    console.error(`error: constraint ${CONSTRAINT_NAME} not found on project ${projectRef}`);
-    process.exit(2);
-  }
-  const allowed = extractAllowedLiterals(def);
+  if (vocabulary.size === 0) fail(`HubEventType in ${TYPES_PATH} has no members`);
+  if (handlerUnion.size === 0) fail(`HubEvent['type'] in ${HANDLER_PATH} has no members`);
+  if (emitted.size === 0) fail(`no emit({ type: '...' }) call sites found in ${HANDLER_PATH}`);
 
-  const missing = [...emitted].filter((v) => !allowed.has(v)).sort();
-  const unused = [...allowed].filter((v) => !emitted.has(v)).sort();
+  console.log(`HubEventType (src/events/types.ts):     ${sorted(vocabulary).join(', ')}`);
+  console.log(`HubEvent['type'] (src/hub/hub-handler): ${sorted(handlerUnion).join(', ')}`);
+  console.log(`Emitted by hub-handler:                 ${sorted(emitted).join(', ')}`);
 
-  console.log(`Project: ${projectRef}`);
-  console.log(`Emitted by handler.ts: ${[...emitted].sort().join(', ')}`);
-  console.log(`Allowed by constraint:  ${[...allowed].sort().join(', ')}`);
+  let failed = false;
 
-  if (missing.length > 0) {
-    console.error(`\nFAIL: handler emits event_types not allowed by constraint:`);
-    for (const v of missing) {
-      console.error(`  - ${v}`);
-    }
-    console.error('\nFix: extend the CHECK constraint via a new migration.');
-    process.exit(1);
+  const missingFromVocabulary = sorted(handlerUnion).filter((v) => !vocabulary.has(v));
+  if (missingFromVocabulary.length > 0) {
+    failed = true;
+    console.error(`\nFAIL: HubEvent declares types absent from HubEventType:`);
+    for (const v of missingFromVocabulary) console.error(`  - ${v}`);
+    console.error(`Fix: add them to HubEventType in ${TYPES_PATH}.`);
   }
 
-  if (unused.length > 0) {
-    console.log(`\nNote: constraint allows event_types not emitted by handler: ${unused.join(', ')}`);
-    console.log('(Not a failure — could be dead values or emitted from other sources.)');
+  const missingFromHandler = sorted(vocabulary).filter((v) => !handlerUnion.has(v));
+  if (missingFromHandler.length > 0) {
+    failed = true;
+    console.error(`\nFAIL: HubEventType declares types absent from HubEvent:`);
+    for (const v of missingFromHandler) console.error(`  - ${v}`);
+    console.error(`Fix: extend the HubEvent union in ${HANDLER_PATH}.`);
   }
 
-  console.log('\nOK: every emitted event_type is allowed by the live constraint.');
+  const unemittable = sorted(emitted).filter((v) => !handlerUnion.has(v));
+  if (unemittable.length > 0) {
+    failed = true;
+    console.error(`\nFAIL: hub-handler emits types its own HubEvent union does not allow:`);
+    for (const v of unemittable) console.error(`  - ${v}`);
+  }
+
+  const leaked = sorted(thoughtVocabulary).filter((v) => handlerUnion.has(v) || vocabulary.has(v));
+  if (leaked.length > 0) {
+    failed = true;
+    console.error(`\nFAIL: thought event types leaked into the hub vocabulary:`);
+    for (const v of leaked) console.error(`  - ${v}`);
+    console.error(`Thought events travel under source 'thought'; a hub-source`);
+    console.error(`client must not receive them via the hub filter.`);
+  }
+
+  if (failed) process.exit(1);
+
+  const declaredNotEmitted = sorted(vocabulary).filter((v) => !emitted.has(v));
+  if (declaredNotEmitted.length > 0) {
+    console.log(`\nNote: declared but not emitted by hub-handler: ${declaredNotEmitted.join(', ')}`);
+    console.log('(Not a failure — may be emitted by another source.)');
+  }
+
+  console.log('\nOK: hub event vocabulary is in parity across types.ts and hub-handler.ts.');
 }
 
 main().catch((err) => {
