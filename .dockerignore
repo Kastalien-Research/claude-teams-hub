@@ -1,0 +1,33 @@
+# Installed and built artifacts — the image builds its own.
+node_modules
+dist
+
+# VCS
+.git
+.gitignore
+
+# Runtime data (the container writes to HUB_DATA_DIR, not the build context)
+.team-hub
+data
+
+# Agent tooling and machine-local state
+.claude
+.letta
+.mcp.json
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Docker's own inputs
+Dockerfile
+.dockerignore
+docker-compose.yml
+.github
+
+# Editor droppings
+*.log
+.DS_Store
+*.swp
+*~

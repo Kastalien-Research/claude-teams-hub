@@ -1,0 +1,18 @@
+services:
+  team-hub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: team-hub:local
+    ports:
+      - "1731:1731"
+    environment:
+      PORT: "1731"
+      THOUGHTBOX_STORAGE: fs
+      HUB_DATA_DIR: /data
+    volumes:
+      - team-hub-data:/data
+    restart: unless-stopped
+
+volumes:
+  team-hub-data:

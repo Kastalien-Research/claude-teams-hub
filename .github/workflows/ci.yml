@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    name: Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm check:types
+
+      - name: Lint
+        run: pnpm check:lint
+
+      # vitest runs against src/ directly; nothing in the suite reads dist/, so
+      # there is no build step here. `pnpm test` would rebuild via build:local.
+      - name: Test
+        run: pnpm exec vitest run
+
+      - name: Cycle check
+        run: pnpm check:cycles
+
+      - name: Event type parity
+        run: pnpm check:event-types
