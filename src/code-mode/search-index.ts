@@ -7,28 +7,10 @@
  */
 
 import { SESSION_OPERATIONS } from "../sessions/operations.js";
-import { NOTEBOOK_OPERATIONS } from "../notebook/operations.js";
-import { KNOWLEDGE_OPERATIONS } from "../knowledge/operations.js";
-// Created concurrently — imports resolve at compile time
 import { THOUGHT_OPERATIONS } from "../thought/operations.js";
-import {
-  THESEUS_OPERATIONS,
-  ULYSSES_OPERATIONS,
-} from "../protocol/operations.js";
-import {
-  OBSERVABILITY_OPERATIONS,
-} from "../observability/operations.js";
-import { BRANCH_OPERATIONS } from "../branch/operations.js";
 import { HUB_OPERATIONS } from "../hub/operations.js";
-import { CLAIMS_OPERATIONS } from "../claims/operations.js";
-// --- tb.merge (SPEC-MERGE-CORE) — owned by merge-core ---
-import { MERGE_OPERATIONS } from "../merge/operations.js";
-// --- end tb.merge ---
-// tb.runbook.* (SPEC-AGX-SUBSTRATE B6+B8) — owned by flagship-b6b8
-import { RUNBOOK_OPERATIONS } from "../notebook/runbook/operations.js";
 // tb.vars.* — durable named session variables (RLM-lite)
 import { VARS_OPERATIONS } from "./vars-operations.js";
-import { PEER_NOTEBOOK_TOOL } from "../peer-notebook/tool.js";
 import {
   STATIC_RESOURCES,
   RESOURCE_TEMPLATES,
@@ -74,6 +56,27 @@ interface OperationEntry {
 }
 
 /**
+ * The session operations the catalog advertises. Transitional narrowing:
+ * this server is a multi-agent hub with a thought/session ledger attached,
+ * not a session-analytics product, so discovery points at the four
+ * operations that serve coordination — list, get, resume, query_thoughts.
+ *
+ * session_search, session_resume_latest, session_export, and session_analyze
+ * remain WIRED on tb.session (src/code-mode/execute-tool.ts passes them
+ * through to the session tool) and keep working for anyone who calls them.
+ * They are simply withheld from the catalog and the SDK type declaration so
+ * they do not read as part of the supported surface while the ledger's shape
+ * is still moving. Widen this set — do not re-add the plumbing — when they
+ * become load-bearing again.
+ */
+const CORE_SESSION_OPS = new Set([
+  "session_list",
+  "session_get",
+  "session_resume",
+  "session_query_thoughts",
+]);
+
+/**
  * Hand-curated operation annotations. Carries the equivalent of
  * .claude/rules/mcp-gotchas.md into the agent-visible catalog so common
  * mistakes surface at discovery time without the agent having to load
@@ -89,80 +92,79 @@ export interface CatalogAnnotation {
 }
 
 export const CATALOG_ANNOTATIONS: Record<string, CatalogAnnotation> = {
-  "knowledge.add_observation": {
-    whenToUse:
-      "Adding a new observation to an existing entity. Pass entity_id (snake_case) and content; the entity must already exist (use create_entity first or accept the existing-entity behavior on UNIQUE collision).",
-    commonMistakes: [
-      "passing 'entityId' (camelCase) instead of 'entity_id'",
-      "passing 'observation' instead of 'content'",
-    ],
-    relatedOps: ["knowledge.create_entity", "knowledge.query_graph"],
-  },
-  "knowledge.create_relation": {
-    whenToUse:
-      "Linking two existing entities with a typed relation. Pass from_id and to_id (snake_case). query_graph follows OUTGOING relations only, so direction matters.",
-    commonMistakes: [
-      "passing 'source_id'/'target_id' instead of 'from_id'/'to_id'",
-      "expecting bidirectional traversal — query_graph is outgoing-only",
-    ],
-    relatedOps: ["knowledge.query_graph", "knowledge.create_entity"],
-  },
-  "knowledge.query_graph": {
-    whenToUse:
-      "Traversing the knowledge graph from a starting entity. Pass start_entity_id (snake_case). Follows outgoing relations only.",
-    commonMistakes: [
-      "passing 'entity_id' instead of 'start_entity_id'",
-      "expecting incoming relations to be traversed",
-    ],
-    relatedOps: ["knowledge.list_entities", "knowledge.add_observation"],
-  },
-  "knowledge.create_entity": {
-    whenToUse:
-      "Registering a new entity in the graph. Returns the existing entity on UNIQUE(name, type) collision instead of erroring — use add_observation to attach corroborating evidence to a duplicate name.",
-    commonMistakes: [
-      "expecting an error on duplicate name+type — the existing entity is returned",
-    ],
-    relatedOps: ["knowledge.add_observation", "knowledge.create_relation"],
-  },
   "thought.thoughtbox_thought": {
     whenToUse:
-      "Submitting a structured thought. Submit one thought per call so the response's guidance can inform the next thought. Set nextThoughtNeeded=false on the final thought to complete the session.",
+      "Submitting a structured thought. Submit one thought per call so the response's guidance can inform the next thought. Prefer a semantic thoughtType (action_report, belief_snapshot, decision_frame, assumption_update, context_snapshot, progress) over reasoning whenever the thought carries a durable finding — only the typed forms populate payloads that session_query_thoughts can retrieve. Set nextThoughtNeeded=false on the final thought to complete the session.",
     commonMistakes: [
+      "defaulting to thoughtType 'reasoning' for findings a teammate will need to query later",
       "forgetting to complete sessions (nextThoughtNeeded stays true)",
       "reusing thoughtNumber within the same branch (must be unique per session+branch)",
       "submitting decision_frame without exactly one selected:true option",
     ],
-    relatedOps: ["session.session_resume", "branch.branch_spawn"],
+    relatedOps: ["session.session_resume", "session.session_query_thoughts"],
   },
-  "branch.branch_spawn": {
+  "hub.quick_join": {
     whenToUse:
-      "Forking a session to explore an alternative under a modified premise. Pair with a synthesis thought after the branch completes so the conclusion lands back on the main line.",
-    relatedOps: ["branch.branch_merge", "thought.thoughtbox_thought"],
-  },
-  "ulysses.init": {
-    whenToUse:
-      "Starting a surprise-gated debugging session. The S-register increments on each surprising outcome; reaching S=2 forces a reflection before further mutations.",
+      "Onboarding into a workspace. Preferred over register + join_workspace: it registers the agent and joins the workspace in one call, and the returned agentId is implicit for every later hub call in this session. Requires name and workspaceId.",
     commonMistakes: [
-      "calling further mutating ops with S>=2 before tb.ulysses({operation:'reflect'})",
+      "calling register first and then quick_join — quick_join already registers",
+      "omitting workspaceId (use list_workspaces to find one, or create_workspace first)",
     ],
-    relatedOps: ["ulysses.outcome", "ulysses.reflect"],
+    relatedOps: ["hub.list_workspaces", "hub.create_workspace", "hub.whoami"],
   },
-  "theseus.init": {
+  "hub.add_dependency": {
     whenToUse:
-      "Starting a behavior-preserving refactor session with hard scope locking. Out-of-scope file edits require an explicit visa.",
+      "Declaring that one problem must wait on another. Requires dependsOnProblemId (the problem that must resolve FIRST) alongside workspaceId and problemId. The dependent problem stays out of ready_problems until the dependency resolves.",
     commonMistakes: [
-      "editing a file outside the declared scope without first calling theseus.visa",
+      "passing 'dependsOn' or 'blockedBy' instead of 'dependsOnProblemId'",
+      "reversing the direction — problemId is the waiter, dependsOnProblemId is the blocker",
     ],
-    relatedOps: ["theseus.visa", "theseus.checkpoint", "theseus.outcome"],
+    relatedOps: ["hub.ready_problems", "hub.blocked_problems", "hub.remove_dependency"],
   },
-  "notebook.notebook_validate": {
+  "hub.create_sub_problem": {
     whenToUse:
-      "Running a code cell as a deterministic predicate over JSON-serialisable observed data. The cell must write its verdict to TB_VERDICT_PATH as { verdict, reason, evidence? } using the auto-materialised tb-validate.js helpers.",
+      "Decomposing a problem into a child that inherits workspace scope. Requires parentId (the existing problem being decomposed) alongside workspaceId, title, and description.",
     commonMistakes: [
-      "forgetting to import { observed, pass, fail } from './tb-validate.js'",
-      "writing arbitrary console output and expecting that to be the verdict — the verdict is the JSON file at TB_VERDICT_PATH",
+      "passing 'problemId' or 'parentProblemId' instead of 'parentId'",
+      "using create_problem for a decomposition, which loses the parent link",
     ],
-    relatedOps: ["notebook.notebook_run_cell", "notebook.notebook_add_cell"],
+    relatedOps: ["hub.create_problem", "hub.list_problems"],
+  },
+  "hub.create_proposal": {
+    whenToUse:
+      "Proposing a solution to a problem. Requires sourceBranch — the thought branch holding the work — alongside workspaceId, title, and description. problemId is optional but links the proposal to the problem it resolves.",
+    commonMistakes: [
+      "omitting sourceBranch (it is required, not inferred from the claim)",
+      "passing 'branch' or 'branchId' instead of 'sourceBranch'",
+    ],
+    relatedOps: ["hub.review_proposal", "hub.merge_proposal", "hub.claim_problem"],
+  },
+  "hub.merge_proposal": {
+    whenToUse:
+      "Merging an approved proposal. Requires at least one approve review first, and takes mergeMessage — the content of the merge thought that persists to the workspace's main session, so write it as the synthesis, not as a label.",
+    commonMistakes: [
+      "passing 'message' or 'summary' instead of 'mergeMessage'",
+      "merging before any review_proposal with verdict 'approve' exists",
+    ],
+    relatedOps: ["hub.review_proposal", "hub.list_proposals"],
+  },
+  "hub.endorse_consensus": {
+    whenToUse:
+      "Recording agreement with an existing consensus marker. Requires consensusId (from mark_consensus or list_consensus) alongside workspaceId.",
+    commonMistakes: [
+      "passing the consensus name instead of consensusId",
+      "calling mark_consensus again to agree — that creates a competing marker",
+    ],
+    relatedOps: ["hub.mark_consensus", "hub.list_consensus"],
+  },
+  "hub.post_message": {
+    whenToUse:
+      "Posting to a problem's discussion channel. Channels are problem-scoped, so both workspaceId and problemId are required — there is no workspace-wide channel. Pass ref to cite the thought behind the message.",
+    commonMistakes: [
+      "omitting problemId and expecting a workspace-level channel",
+      "using post_system_message for agent-authored discussion (it is for automated notifications)",
+    ],
+    relatedOps: ["hub.read_channel", "hub.post_system_message"],
   },
 };
 
@@ -231,50 +233,19 @@ export function buildSearchCatalog(): SearchCatalog {
         name: "thoughtbox_execute",
         description: "Run JavaScript against the tb SDK for Thoughtbox operation modules.",
       },
-      {
-        name: PEER_NOTEBOOK_TOOL.name,
-        description: PEER_NOTEBOOK_TOOL.description,
-        operations: [
-          "peer_artifact_seed",
-          "peer_invoke",
-          "peer_get_invocation",
-          "peer_list_trace_events",
-          "peer_get_artifact",
-          "peer_manifest_create",
-          "peer_manifest_approve",
-          "peer_manifest_reject",
-          "peer_manifest_list",
-          "peer_graduate_notebook",
-        ],
-      },
     ],
 
     operations: {
-      session: indexOperations(SESSION_OPERATIONS),
-      notebook: indexOperations(NOTEBOOK_OPERATIONS),
-      knowledge: indexOperations(KNOWLEDGE_OPERATIONS),
-      thought: indexOperations(THOUGHT_OPERATIONS),
-      theseus: indexOperations(THESEUS_OPERATIONS),
-      ulysses: indexOperations(ULYSSES_OPERATIONS),
-      observability: indexOperations(OBSERVABILITY_OPERATIONS),
-      branch: indexOperations(BRANCH_OPERATIONS),
       hub: indexOperations(HUB_OPERATIONS),
-      claims: indexOperations(CLAIMS_OPERATIONS),
-      // --- tb.merge (SPEC-MERGE-CORE) — owned by merge-core ---
-      merge: indexOperations(MERGE_OPERATIONS),
-      // --- end tb.merge ---
-      // tb.runbook.* (SPEC-AGX-SUBSTRATE B6+B8) — owned by flagship-b6b8
-      runbook: indexOperations(RUNBOOK_OPERATIONS),
+      thought: indexOperations(THOUGHT_OPERATIONS),
+      session: indexOperations(
+        SESSION_OPERATIONS.filter((op) => CORE_SESSION_OPS.has(op.name)),
+      ),
       // tb.vars.* — durable named session variables (RLM-lite)
       vars: indexOperations(VARS_OPERATIONS),
     },
 
     prompts: [
-      {
-        name: "list_mcp_assets",
-        description: "Overview of all MCP capabilities, tools, resources, and quickstart guide",
-        args: [],
-      },
       {
         name: "interleaved-thinking",
         description:

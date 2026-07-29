@@ -1,4 +1,3 @@
-import chalk from "chalk";
 import { PATTERNS_COOKBOOK } from "./resources/patterns-cookbook-content.js";
 import {
   InMemoryStorage,
@@ -579,13 +578,13 @@ export class ThoughtHandler {
     let context = "";
 
     if (isRevision) {
-      prefix = chalk.yellow("🔄 Revision");
+      prefix = "🔄 Revision";
       context = ` (revising thought ${revisesThought})`;
     } else if (branchFromThought) {
-      prefix = chalk.green("🌿 Branch");
+      prefix = "🌿 Branch";
       context = ` (from thought ${branchFromThought}, ID: ${branchId})`;
     } else {
-      prefix = chalk.blue("💭 Thought");
+      prefix = "💭 Thought";
       context = "";
     }
 

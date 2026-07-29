@@ -10,7 +10,6 @@ import * as vm from "node:vm";
 import { z } from "zod";
 import type { SearchCatalog } from "./search-index.js";
 import type { CodeModeResult } from "./types.js";
-import { traceSearch } from "./trace.js";
 
 const MAX_LOGS = 100;
 const TIMEOUT_MS = 10_000;
@@ -45,14 +44,14 @@ interface SearchCatalog {
   resourceTemplates: Array<{ name: string; uriTemplate: string; description: string; mimeType: string }>;
 }
 
-Modules in catalog.operations: session, thought, knowledge, notebook, theseus, ulysses, observability, branch, hub, claims, runbook, merge, vars
-Public MCP tools in catalog.publicTools: thoughtbox_search, thoughtbox_execute, thoughtbox_peer_notebook
+Modules in catalog.operations: hub, thought, session, vars
+Public MCP tools in catalog.publicTools: thoughtbox_search, thoughtbox_execute
 
 Examples:
 - List all modules: \`async () => Object.keys(catalog.operations)\`
 - List public tools: \`async () => catalog.publicTools\`
 - Find session operations: \`async () => catalog.operations.session\`
-- Search by keyword: \`async () => { const q = "entity"; return Object.entries(catalog.operations).flatMap(([mod, ops]) => Object.entries(ops).filter(([_, op]) => op.description.toLowerCase().includes(q)).map(([name, op]) => ({ module: mod, name, title: op.title }))) }\`
+- Search by keyword: \`async () => { const q = "workspace"; return Object.entries(catalog.operations).flatMap(([mod, ops]) => Object.entries(ops).filter(([_, op]) => op.description.toLowerCase().includes(q)).map(([name, op]) => ({ module: mod, name, title: op.title }))) }\`
 - Find prompts: \`async () => catalog.prompts.filter(p => p.name.includes('interleaved'))\`
 - List resources: \`async () => catalog.resources.map(r => ({ name: r.name, uri: r.uri }))\``,
   inputSchema: searchToolInputSchema,
@@ -143,8 +142,6 @@ export class SearchTool {
         durationMs: Date.now() - start,
       };
     }
-
-    traceSearch({ code: input.code }, output);
 
     return {
       content: [{ type: "text" as const, text: JSON.stringify(output, null, 2) }],

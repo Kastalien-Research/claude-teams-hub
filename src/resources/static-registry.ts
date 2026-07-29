@@ -37,30 +37,9 @@ export interface ResourceTemplateDef {
 export const STATIC_RESOURCES: StaticResourceDef[] = [
   {
     key: "status",
-    name: "Notebook Server Status",
+    name: "Team Hub Server Status",
     uri: "system://status",
-    description: "Health snapshot of the notebook server",
-    mimeType: "application/json",
-  },
-  {
-    key: "notebook-operations",
-    name: "Notebook Operations Catalog",
-    uri: "thoughtbox://notebook/operations",
-    description: "Complete catalog of notebook operations with schemas and examples",
-    mimeType: "application/json",
-  },
-  {
-    key: "notebook-capabilities",
-    name: "Notebook Evidence Engine Capabilities",
-    uri: "thoughtbox://notebook/capabilities",
-    description: "Notebook Evidence Engine modes, templates, outputs, and recommended use cases",
-    mimeType: "application/json",
-  },
-  {
-    key: "peer-notebook-pilot",
-    name: "Peer Notebook",
-    uri: "thoughtbox://peer-notebook/pilot",
-    description: "Peer notebook surface: artifact seed, graduated-peer invocation, invocation/trace/artifact reads",
+    description: "Health snapshot of the team hub server",
     mimeType: "application/json",
   },
   {
@@ -71,20 +50,6 @@ export const STATIC_RESOURCES: StaticResourceDef[] = [
     mimeType: "application/json",
   },
   {
-    key: "gateway-operations",
-    name: "Gateway Operations Catalog",
-    uri: "thoughtbox://gateway/operations",
-    description: "Complete catalog of operations available through the Code Mode gateway, grouped by tb SDK module (thought, session, knowledge, notebook, theseus, ulysses, observability, branch, hub, claims, runbook, merge, vars)",
-    mimeType: "application/json",
-  },
-  {
-    key: "knowledge-operations",
-    name: "Knowledge Operations Catalog",
-    uri: "thoughtbox://knowledge/operations",
-    description: "Complete catalog of knowledge graph operations (create_entity, get_entity, list_entities, add_observation, create_relation, query_graph, stats) with schemas and examples",
-    mimeType: "application/json",
-  },
-  {
     key: "hub-operations",
     name: "Hub Operations Catalog",
     uri: "thoughtbox://hub/operations",
@@ -92,24 +57,10 @@ export const STATIC_RESOURCES: StaticResourceDef[] = [
     mimeType: "application/json",
   },
   {
-    key: "claims-operations",
-    name: "Claims Operations Catalog",
-    uri: "thoughtbox://claims/operations",
-    description: "Complete catalog of the 9 claim graph operations (assert, support, invalidate, supersede, link, subscribe, unsubscribe, query, affected) with schemas, examples, and vocabulary",
-    mimeType: "application/json",
-  },
-  {
     key: "patterns-cookbook",
     name: "Thoughtbox Patterns Cookbook",
     uri: "thoughtbox://patterns-cookbook",
     description: "Guide to core reasoning patterns for thoughtbox tool",
-    mimeType: "text/markdown",
-  },
-  {
-    key: "architecture",
-    name: "Server Architecture Guide",
-    uri: "thoughtbox://architecture",
-    description: "Interactive notebook explaining Thoughtbox MCP server architecture and implementation patterns",
     mimeType: "text/markdown",
   },
   {
@@ -133,23 +84,9 @@ export const STATIC_RESOURCES: StaticResourceDef[] = [
     description: "Workflow for parallel hypothesis exploration using Thoughtbox branching",
     mimeType: "text/markdown",
   },
-  {
-    key: "knowledge-stats",
-    name: "Knowledge Graph Statistics",
-    uri: "thoughtbox://knowledge/stats",
-    description: "Knowledge graph statistics (entity/relation counts)",
-    mimeType: "application/json",
-  },
 ];
 
 export const RESOURCE_TEMPLATES: ResourceTemplateDef[] = [
-  {
-    key: "gateway-operation",
-    name: "Gateway Operation Detail",
-    uriTemplate: "thoughtbox://gateway/operations/{op}",
-    description: "Individual operation schema from the Code Mode gateway catalog, looked up by name across tb SDK modules",
-    mimeType: "application/json",
-  },
   {
     key: "session-operation",
     name: "Session Operation Detail",
@@ -158,31 +95,10 @@ export const RESOURCE_TEMPLATES: ResourceTemplateDef[] = [
     mimeType: "application/json",
   },
   {
-    key: "knowledge-operation",
-    name: "Knowledge Operation Detail",
-    uriTemplate: "thoughtbox://knowledge/operations/{op}",
-    description: "Individual knowledge graph operation schema and examples",
-    mimeType: "application/json",
-  },
-  {
     key: "hub-operation",
     name: "Hub Operation Detail",
     uriTemplate: "thoughtbox://hub/operations/{op}",
     description: "Individual hub operation schema and examples",
-    mimeType: "application/json",
-  },
-  {
-    key: "claims-operation",
-    name: "Claims Operation Detail",
-    uriTemplate: "thoughtbox://claims/operations/{op}",
-    description: "Individual claim graph operation schema and examples",
-    mimeType: "application/json",
-  },
-  {
-    key: "notebook-operation",
-    name: "Notebook Operation Detail",
-    uriTemplate: "thoughtbox://notebook/operations/{op}",
-    description: "Individual notebook operation schema and examples",
     mimeType: "application/json",
   },
   {

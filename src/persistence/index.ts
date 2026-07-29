@@ -31,24 +31,6 @@ export type {
 // Storage implementations
 export { InMemoryStorage, LinkedThoughtStore } from './storage.js';
 export { FileSystemStorage, StorageNotScopedError } from './filesystem-storage.js';
-export { SupabaseStorage } from './supabase-storage.js';
-export type { SupabaseStorageConfig } from './supabase-storage.js';
-
-// Notebook document persistence (notebook_persist contract backends)
-export {
-  FileSystemNotebookDocumentStorage,
-  InMemoryNotebookDocumentStorage,
-} from './notebook-document-storage.js';
-export type {
-  NotebookDocumentStorage,
-  NotebookDocumentSummary,
-  PersistedNotebookDocument,
-} from './notebook-document-storage.js';
-export {
-  SupabaseNotebookDocumentStorage,
-  createSupabaseNotebookDocumentStorageProvider,
-} from './supabase-notebook-document-storage.js';
-export type { SupabaseNotebookDocumentStorageConfig } from './supabase-notebook-document-storage.js';
 
 // Session exporter
 export { SessionExporter } from './export.js';

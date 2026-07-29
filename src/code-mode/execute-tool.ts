@@ -10,19 +10,10 @@ import * as vm from "node:vm";
 import { z } from "zod";
 import type { CodeModeResult } from "./types.js";
 import { TB_SDK_TYPES } from "./sdk-types.js";
-import { traceExecute } from "./trace.js";
 
 import type { ThoughtTool, ThoughtToolInput } from "../thought/tool.js";
 import type { SessionTool, SessionToolInput } from "../sessions/tool.js";
-import type { KnowledgeTool, KnowledgeToolInput } from "../knowledge/tool.js";
-import type { NotebookTool, NotebookToolInput } from "../notebook/tool.js";
-import type { TheseusTool, TheseusToolInput } from "../protocol/theseus-tool.js";
-import type { UlyssesTool, UlyssesToolInput } from "../protocol/ulysses-tool.js";
-import type { ObservabilityGatewayHandler, ObservabilityInput } from "../observability/gateway-handler.js";
-import type { BranchHandler } from "../branch/index.js";
 import type { HubToolResult } from "../hub/hub-tool-handler.js";
-import type { ClaimsToolResult } from "../claims/claims-tool-handler.js";
-import type { MergeToolResult } from "../merge/merge-tool-handler.js";
 
 const MAX_LOGS = 100;
 const TIMEOUT_MS = 30_000;
@@ -48,96 +39,41 @@ export interface HubDispatcher {
   handle(input: { operation: string; [key: string]: unknown }): Promise<HubToolResult>;
 }
 
-/**
- * Session-bound claims dispatch surface (SPEC-AGX-SUBSTRATE B2). Same
- * shape as HubDispatcher; identity rides the session registry shared with
- * the hub handler, so tb.claims mutations get an implicit agentId after
- * the first tb.hub.register/quick_join. agentId remains overridable per
- * call for multi-agent flows within one session.
- */
-export interface ClaimsDispatcher {
-  handle(input: { operation: string; [key: string]: unknown }): Promise<ClaimsToolResult>;
-}
-
-// --- tb.merge (SPEC-MERGE-CORE) — owned by merge-core -------------------
-
-/**
- * Session-bound merge dispatch surface (SPEC-MERGE-CORE c9). Same
- * shape as HubDispatcher/ClaimsDispatcher; identity rides the session
- * registry shared with the hub handler, so tb.merge.request gets an
- * implicit agentId after the first tb.hub.register/quick_join. Approval
- * is deliberately NOT reachable from this surface (human-only, spec c4).
- */
-export interface MergeDispatcher {
-  handle(input: { operation: string; [key: string]: unknown }): Promise<MergeToolResult>;
-}
-
-// --- end tb.merge ------------------------------------------------------------
-
 export interface ExecuteToolDeps {
   thoughtTool: ThoughtTool;
   sessionTool: SessionTool;
-  /**
-   * Undefined when knowledge storage failed to initialize at server creation.
-   * `tb.knowledge.*` then returns a clean error (carrying
-   * `knowledgeUnavailableReason`) instead of crashing.
-   */
-  knowledgeTool?: KnowledgeTool;
-  /** Captured knowledge storage init failure, surfaced in the tb.knowledge.* error. */
-  knowledgeUnavailableReason?: string;
-  notebookTool: NotebookTool;
-  theseusTool: TheseusTool;
-  ulyssesTool: UlyssesTool;
-  observabilityHandler: ObservabilityGatewayHandler;
-  /**
-   * Hosted-mode only. The branch toolhost spawns Supabase Edge Function
-   * workers and requires Supabase credentials, so it is left undefined in
-   * local/self-hosted mode. `tb.branch.*` then returns a clear error instead
-   * of crashing session setup.
-   */
-  branchHandler?: BranchHandler;
   /**
    * Per-session dispatcher over the process-shared hub storage. Undefined
    * when no hub storage was wired at server creation; `tb.hub.*` then
    * returns a clear error instead of crashing.
    */
   hubDispatcher?: HubDispatcher;
-  /**
-   * Per-session dispatcher over the process-shared claim storage
-   * (SPEC-AGX-SUBSTRATE B2). Undefined when no claim storage was wired at
-   * server creation; `tb.claims.*` then returns a clear error instead of
-   * crashing.
-   */
-  claimsDispatcher?: ClaimsDispatcher;
-  // --- tb.merge (SPEC-MERGE-CORE) — owned by merge-core -----------------
-  /**
-   * Per-session dispatcher over the process-shared merge-commit storage
-   * (SPEC-MERGE-CORE c9). Undefined when no merge storage was wired at
-   * server creation; `tb.merge.*` then returns a clear error instead of
-   * crashing.
-   */
-  mergeDispatcher?: MergeDispatcher;
-  // --- end tb.merge ----------------------------------------------------------
 }
 
 export const EXECUTE_TOOL = {
   name: "thoughtbox_execute",
   description: `Run JavaScript using the \`tb\` SDK to chain Thoughtbox operations in a single call.
 
-**One state-mutating operation per call.** Submit only one \`tb.thought()\`, \`tb.ulysses()\`, \`tb.theseus()\`, hub-mutating call (\`tb.hub.register()\`, \`tb.hub.createWorkspace()\`, \`tb.hub.createProblem()\`, \`tb.hub.mergeProposal()\`, etc.), claims-mutating call (\`tb.claims.assert()\`, \`tb.claims.invalidate()\`, \`tb.claims.supersede()\`, etc.), or merge-mutating call (\`tb.merge.request()\`) per \`thoughtbox_execute\` invocation. Each response contains guidance (patterns, session state, protocol state) that should inform your next operation. Batching multiple state-mutating calls bypasses this feedback loop and produces lower-quality reasoning. Read-only operations (\`tb.session.*\`, \`tb.knowledge.*\`, \`tb.observability()\`, \`tb.branch.*\`, \`tb.hub.whoami()\`, \`tb.hub.listWorkspaces()\`, \`tb.hub.readChannel()\`, \`tb.claims.query()\`, \`tb.claims.affected()\`, \`tb.merge.status()\`, \`tb.merge.list()\`, \`tb.merge.claimDiff()\`, etc.) and session variables (\`tb.vars.*\` — store intermediate values across execute calls within this MCP session) may be freely chained.
+**One state-mutating operation per call.** Submit only one \`tb.thought()\`, or one hub-mutating call (\`tb.hub.register()\`, \`tb.hub.quickJoin()\`, \`tb.hub.createWorkspace()\`, \`tb.hub.createProblem()\`, \`tb.hub.claimProblem()\`, \`tb.hub.updateProblem()\`, \`tb.hub.createProposal()\`, \`tb.hub.reviewProposal()\`, \`tb.hub.mergeProposal()\`, \`tb.hub.markConsensus()\`, \`tb.hub.endorseConsensus()\`, \`tb.hub.postMessage()\`, etc.), per \`thoughtbox_execute\` invocation. Each response carries guidance (patterns, session state, workspace state) that should inform your next operation. Batching multiple state-mutating calls bypasses this feedback loop and produces lower-quality reasoning. Read-only operations — \`tb.session.*\` and hub reads (\`tb.hub.whoami()\`, \`tb.hub.listWorkspaces()\`, \`tb.hub.listProblems()\`, \`tb.hub.readyProblems()\`, \`tb.hub.blockedProblems()\`, \`tb.hub.listProposals()\`, \`tb.hub.listConsensus()\`, \`tb.hub.readChannel()\`, \`tb.hub.workspaceStatus()\`, \`tb.hub.workspaceDigest()\`) — plus session variables (\`tb.vars.*\` — store intermediate values across execute calls within this MCP session) may be freely chained.
+
+**Pick a semantic thoughtType.** \`reasoning\` is the fallback, not the default: it records that you thought, but leaves nothing a teammate or a later session can query. Whenever a thought carries a durable finding, use the typed form that matches it — \`action_report\` (you ran something; what happened, whether it is reversible), \`belief_snapshot\` (the entities, constraints, and risks you currently believe are in play), \`decision_frame\` (the options you weighed, with exactly one \`selected: true\`), \`assumption_update\` (a belief moved between believed / uncertain / refuted, and what triggered the move), \`context_snapshot\` (the tools, model, and data sources you had available), \`progress\` (a task's status). These populate structured payloads that \`tb.session.queryThoughts({ sessionId, type })\` retrieves directly; a \`reasoning\` thought is prose someone has to re-read to use.
 
 ${TB_SDK_TYPES}
 
 Example:
 \`\`\`js
 async () => {
-  const sessions = await tb.session.list();
+  const ready = await tb.hub.readyProblems({ workspaceId: "ws-abc123" });
   await tb.thought({
-    thought: "Analyzing prior sessions",
-    thoughtType: "reasoning",
+    thought: "Two problems are unblocked. Claiming the dependency root first so the second stops being blocked.",
+    thoughtType: "decision_frame",
+    options: [
+      { label: "Claim prob-001 (dependency root)", selected: true, reason: "unblocks prob-002" },
+      { label: "Claim prob-002 first", selected: false, reason: "still blocked by prob-001" },
+    ],
     nextThoughtNeeded: true,
   });
-  return sessions;
+  return ready;
 }
 \`\`\`
 
@@ -170,36 +106,6 @@ function unwrapToolResult(raw: unknown): unknown {
   } catch {
     return content[0].text;
   }
-}
-
-/**
- * Flatten notebook handler responses.
- * Handlers return { success, notebook/cell/cells/content/execution: ... }.
- * SDK consumers expect the inner value directly with `id` at top level.
- */
-function flattenNotebookResult(raw: unknown): unknown {
-  if (!raw || typeof raw !== "object") return raw;
-  const obj = raw as Record<string, unknown>;
-  if (obj.notebook && typeof obj.notebook === "object") {
-    return obj.notebook;
-  }
-  if (obj.cell && typeof obj.cell === "object") {
-    return obj.cell;
-  }
-  return raw;
-}
-
-/**
- * Normalize knowledge entity responses so `id` is always present.
- * Handlers return `entity_id`; SDK consumers expect `id`.
- */
-function normalizeEntityResult(raw: unknown): unknown {
-  if (!raw || typeof raw !== "object") return raw;
-  const obj = raw as Record<string, unknown>;
-  if (obj.entity_id && !obj.id) {
-    return { id: obj.entity_id, ...obj };
-  }
-  return raw;
 }
 
 /**
@@ -260,40 +166,6 @@ const HUB_SDK_METHODS: Record<string, string> = {
   workspaceStatus: "workspace_status",
   workspaceDigest: "workspace_digest",
 };
-
-/**
- * tb.claims method names mapped to claims operation names
- * (canonical list: src/claims/operations.ts).
- */
-const CLAIMS_SDK_METHODS: Record<string, string> = {
-  assert: "assert",
-  support: "support",
-  invalidate: "invalidate",
-  supersede: "supersede",
-  link: "link",
-  subscribe: "subscribe",
-  unsubscribe: "unsubscribe",
-  query: "query",
-  verify: "verify",
-  changedSince: "changed_since",
-  affected: "affected",
-};
-
-// --- tb.merge (SPEC-MERGE-CORE) — owned by merge-core -------------------
-
-/**
- * tb.merge method names mapped to merge operation names
- * (canonical list: src/merge/operations.ts). No approve method exists:
- * approval is human-only via the apps/web route (spec c4).
- */
-const MERGE_SDK_METHODS: Record<string, string> = {
-  request: "request",
-  status: "status",
-  list: "list",
-  claimDiff: "claim_diff",
-};
-
-// --- end tb.merge ------------------------------------------------------------
 
 interface TbContext {
   sessionId?: string;
@@ -448,29 +320,7 @@ export class SessionVarsStore {
 // --- end tb.vars ----------------------------------------------------------
 
 function buildTbObject(deps: ExecuteToolDeps, ctx: TbContext, varsStore: SessionVarsStore): Record<string, unknown> {
-  const { thoughtTool, sessionTool, knowledgeTool, notebookTool,
-          theseusTool, ulyssesTool, observabilityHandler, branchHandler,
-          hubDispatcher, claimsDispatcher, mergeDispatcher } = deps;
-
-  const requireKnowledgeTool = (): KnowledgeTool => {
-    if (!knowledgeTool) {
-      throw new Error(
-        `knowledge unavailable: ${deps.knowledgeUnavailableReason ?? "knowledge storage failed to initialize"}`,
-      );
-    }
-    return knowledgeTool;
-  };
-
-  const requireBranchHandler = (): BranchHandler => {
-    if (!branchHandler) {
-      throw new Error(
-        "Branch operations require hosted mode. The branch toolhost spawns " +
-          "Supabase Edge Function workers and needs SUPABASE_URL and " +
-          "SUPABASE_SERVICE_ROLE_KEY; it is unavailable in local/self-hosted mode.",
-      );
-    }
-    return branchHandler;
-  };
+  const { thoughtTool, sessionTool, hubDispatcher } = deps;
 
   const requireHubDispatcher = (): HubDispatcher => {
     if (!hubDispatcher) {
@@ -489,42 +339,6 @@ function buildTbObject(deps: ExecuteToolDeps, ctx: TbContext, varsStore: Session
       unwrapHubResult(await requireHubDispatcher().handle({ operation, ...hubArgs }));
   }
 
-  const requireClaimsDispatcher = (): ClaimsDispatcher => {
-    if (!claimsDispatcher) {
-      throw new Error(
-        "Claims operations are unavailable: no claim storage was wired into " +
-          "this server instance. tb.claims.* requires the server to be started " +
-          "with claim storage (see createMcpServer's claimStorage argument).",
-      );
-    }
-    return claimsDispatcher;
-  };
-
-  const claims: Record<string, (args?: Record<string, unknown>) => Promise<unknown>> = {};
-  for (const [method, operation] of Object.entries(CLAIMS_SDK_METHODS)) {
-    claims[method] = async (claimsArgs: Record<string, unknown> = {}) =>
-      unwrapHubResult(await requireClaimsDispatcher().handle({ operation, ...claimsArgs }));
-  }
-
-  // --- tb.merge (SPEC-MERGE-CORE) — owned by merge-core -----------------
-  const requireMergeDispatcher = (): MergeDispatcher => {
-    if (!mergeDispatcher) {
-      throw new Error(
-        "Merge operations are unavailable: no merge-commit storage was wired " +
-          "into this server instance. tb.merge.* requires the server to be " +
-          "started with merge storage (see createMcpServer's mergeStorage argument).",
-      );
-    }
-    return mergeDispatcher;
-  };
-
-  const merge: Record<string, (args?: Record<string, unknown>) => Promise<unknown>> = {};
-  for (const [method, operation] of Object.entries(MERGE_SDK_METHODS)) {
-    merge[method] = async (mergeArgs: Record<string, unknown> = {}) =>
-      unwrapHubResult(await requireMergeDispatcher().handle({ operation, ...mergeArgs }));
-  }
-  // --- end tb.merge ----------------------------------------------------------
-
   return {
     thought: async (input: ThoughtToolInput) => {
       const result = unwrapToolResult(await thoughtTool.handle(input));
@@ -538,6 +352,9 @@ function buildTbObject(deps: ExecuteToolDeps, ctx: TbContext, varsStore: Session
       return result;
     },
 
+    // search, resumeLatest, export, and analyze stay wired here but are
+    // withheld from the search catalog and the SDK type declaration — see
+    // CORE_SESSION_OPS in src/code-mode/search-index.ts for why.
     session: {
       list: async (args?: { limit?: number; offset?: number; tags?: string[] }) =>
         unwrapToolResult(await sessionTool.handle({ operation: "session_list", ...args })),
@@ -572,174 +389,7 @@ function buildTbObject(deps: ExecuteToolDeps, ctx: TbContext, varsStore: Session
         } as SessionToolInput)),
     },
 
-    knowledge: {
-      createEntity: async (args: Record<string, unknown>) =>
-        normalizeEntityResult(unwrapToolResult(await requireKnowledgeTool().handle({
-          operation: "knowledge_create_entity", ...args,
-        } as KnowledgeToolInput))),
-      getEntity: async (...args: unknown[]) => {
-        // Accept positional (entityId) plus named { entityId } or the
-        // operation's snake_case { entity_id }.
-        const coerced = coerceCallArgs("tb.knowledge.getEntity", ["entityId"], [], args);
-        const entityId = coerced.entityId ?? coerced.entity_id;
-        if (entityId === undefined) {
-          throw new Error(
-            "tb.knowledge.getEntity: missing required 'entityId'. Accepts " +
-              "positional (entityId) or named ({ entityId }) / ({ entity_id }).",
-          );
-        }
-        return normalizeEntityResult(unwrapToolResult(await requireKnowledgeTool().handle({
-          operation: "knowledge_get_entity", entity_id: entityId,
-        } as KnowledgeToolInput)));
-      },
-      listEntities: async (args?: Record<string, unknown>) =>
-        unwrapToolResult(await requireKnowledgeTool().handle({
-          operation: "knowledge_list_entities", ...args,
-        } as KnowledgeToolInput)),
-      addObservation: async (args: { entity_id: string; content: string; source_session?: string; added_by?: string }) =>
-        unwrapToolResult(await requireKnowledgeTool().handle({
-          operation: "knowledge_add_observation", ...args,
-        } as KnowledgeToolInput)),
-      createRelation: async (args: { from_id: string; to_id: string; relation_type: string; properties?: Record<string, unknown> }) =>
-        unwrapToolResult(await requireKnowledgeTool().handle({
-          operation: "knowledge_create_relation", ...args,
-        } as KnowledgeToolInput)),
-      queryGraph: async (args: { start_entity_id: string; max_depth?: number; relation_types?: string[] }) =>
-        unwrapToolResult(await requireKnowledgeTool().handle({
-          operation: "knowledge_query_graph", ...args,
-        } as KnowledgeToolInput)),
-      stats: async () =>
-        unwrapToolResult(await requireKnowledgeTool().handle({
-          operation: "knowledge_stats",
-        } as KnowledgeToolInput)),
-    },
-
-    notebook: {
-      create: async (args: Record<string, unknown>) =>
-        flattenNotebookResult(unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_create", ...args,
-        } as NotebookToolInput))),
-      list: async () =>
-        unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_list",
-        } as NotebookToolInput)),
-      load: async (args: Record<string, unknown>) =>
-        flattenNotebookResult(unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_load", ...args,
-        } as NotebookToolInput))),
-      addCell: async (args: Record<string, unknown>) =>
-        flattenNotebookResult(unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_add_cell", ...args,
-        } as NotebookToolInput))),
-      updateCell: async (args: Record<string, unknown>) =>
-        flattenNotebookResult(unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_update_cell", ...args,
-        } as NotebookToolInput))),
-      runCell: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_run_cell", ...args,
-        } as NotebookToolInput)),
-      listCells: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_list_cells", ...args,
-        } as NotebookToolInput)),
-      getCell: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_get_cell", ...args,
-        } as NotebookToolInput)),
-      installDeps: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_install_deps", ...args,
-        } as NotebookToolInput)),
-      export: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_export", ...args,
-        } as NotebookToolInput)),
-      validate: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_validate", ...args,
-        } as NotebookToolInput)),
-      persist: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_persist", ...args,
-        } as NotebookToolInput)),
-      startRun: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_start_run", ...args,
-        } as NotebookToolInput)),
-      getRun: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_get_run", ...args,
-        } as NotebookToolInput)),
-      listRuns: async (args: Record<string, unknown> = {}) =>
-        unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_list_runs", ...args,
-        } as NotebookToolInput)),
-      cancelRun: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_cancel_run", ...args,
-        } as NotebookToolInput)),
-      getArtifact: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_get_artifact", ...args,
-        } as NotebookToolInput)),
-      fitness: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_fitness", ...args,
-        } as NotebookToolInput)),
-      instantiate: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_instantiate", ...args,
-        } as NotebookToolInput)),
-    },
-
-    // -------------------------------------------------------------------
-    // tb.runbook.* — reactive runbook advancement (SPEC-AGX-SUBSTRATE
-    // B6 await↔claim binding + B8 pull-based advancer). Dispatches through
-    // the notebook toolhost. Owned by flagship-b6b8 (append-only block).
-    // -------------------------------------------------------------------
-    runbook: {
-      advance: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_advance", ...args,
-        } as NotebookToolInput)),
-      status: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_instance_status", ...args,
-        } as NotebookToolInput)),
-      addAwaitCell: async (args: Record<string, unknown>) =>
-        flattenNotebookResult(unwrapToolResult(await notebookTool.handle({
-          operation: "notebook_add_cell", cellType: "await", ...args,
-        } as NotebookToolInput))),
-    },
-
-    theseus: async (input: TheseusToolInput) =>
-      unwrapToolResult(await theseusTool.handle(input)),
-
-    ulysses: async (input: UlyssesToolInput) =>
-      unwrapToolResult(await ulyssesTool.handle(input)),
-
-    observability: async (input: ObservabilityInput) =>
-      unwrapToolResult(await observabilityHandler.handle(input)),
-
-    branch: {
-      spawn: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await requireBranchHandler().processTool("spawn", args)),
-      merge: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await requireBranchHandler().processTool("merge", args)),
-      list: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await requireBranchHandler().processTool("list", args)),
-      get: async (args: Record<string, unknown>) =>
-        unwrapToolResult(await requireBranchHandler().processTool("get", args)),
-    },
-
     hub,
-
-    claims,
-
-    // --- tb.merge (SPEC-MERGE-CORE) — owned by merge-core ---------------
-    merge,
-    // --- end tb.merge --------------------------------------------------------
 
     // --- tb.vars — durable named variables (RLM-lite) --------------------
     // Session-scoped, in-memory, JSON-only. Catalog:
@@ -865,8 +515,6 @@ export class ExecuteTool {
     if (tbCtx.sessionId) {
       output.sessionId = tbCtx.sessionId;
     }
-
-    traceExecute({ code: input.code }, output);
 
     return {
       content: [{ type: "text" as const, text: JSON.stringify(output, null, 2) }],
