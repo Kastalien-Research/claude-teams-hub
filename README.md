@@ -1,4 +1,4 @@
-# Team Hub
+# Claude Teams Hub
 
 Multi-agent collaboration hub for Claude Agent Teams, extracted from
 [Thoughtbox](https://github.com/Kastalien-Research/thoughtbox) at

@@ -1,5 +1,5 @@
 {
-  "name": "@kastalien-research/team-hub",
+  "name": "@kastalien-research/claude-teams-hub",
   "version": "0.1.0",
   "description": "Multi-agent collaboration hub for Claude Agent Teams: workspaces, problems, proposals, consensus, channels, and a transitional thought ledger, served over two Code Mode MCP tools with a live SSE event stream.",
   "type": "module",
@@ -34,5 +34,9 @@
     "tsx": "4.20.6",
     "typescript": "5.9.3",
     "vitest": "4.0.18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kastalien-Research/claude-teams-hub.git"
   }
 }
