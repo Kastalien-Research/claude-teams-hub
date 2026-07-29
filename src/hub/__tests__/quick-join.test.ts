@@ -112,4 +112,72 @@ describe('quick_join operation', () => {
       handler.handle(null, 'quick_join', { name: 'NoWS' })
     ).rejects.toThrow();
   });
+
+  // Known-issue #1 (docs/known-issues.md): quick_join in a session that already
+  // holds an identity used to mint a NEW agent and join THAT, returning success
+  // describing an agent the caller is not — every later call then failed
+  // "Not a member of this workspace" while an undriven orphan sat in the
+  // member list. A session identity, once established, is reused or the call
+  // refuses loudly; it is never silently replaced by a second registration.
+  describe('with an existing session identity', () => {
+    let firstJoin: any;
+    let secondWorkspaceId: string;
+
+    beforeEach(async () => {
+      firstJoin = await handler.handle(null, 'quick_join', {
+        name: 'Reviewer-1',
+        workspaceId,
+      });
+      const coord = await handler.handle(null, 'register', { name: 'Coordinator-2' });
+      const ws2 = await handler.handle((coord as any).agentId, 'create_workspace', {
+        name: 'Second Workspace',
+        description: 'For re-join testing',
+      });
+      secondWorkspaceId = (ws2 as any).workspaceId;
+    });
+
+    it('reuses the identity when the name matches, joining the new workspace', async () => {
+      const before = (await storage.getAgents()).length;
+
+      const rejoin = await handler.handle(firstJoin.agentId, 'quick_join', {
+        name: 'Reviewer-1',
+        workspaceId: secondWorkspaceId,
+      }) as any;
+
+      expect(rejoin.agentId).toBe(firstJoin.agentId);
+      expect(rejoin.workspace.id).toBe(secondWorkspaceId);
+      expect((await storage.getAgents()).length).toBe(before);
+
+      const status = await handler.handle(firstJoin.agentId, 'workspace_status', {
+        workspaceId: secondWorkspaceId,
+      }) as any;
+      expect(status.agents.map((a: any) => a.agentId)).toContain(firstJoin.agentId);
+    });
+
+    it('is idempotent for the workspace already joined', async () => {
+      const rejoin = await handler.handle(firstJoin.agentId, 'quick_join', {
+        name: 'Reviewer-1',
+        workspaceId,
+      }) as any;
+      expect(rejoin.agentId).toBe(firstJoin.agentId);
+      expect(rejoin.workspace.id).toBe(workspaceId);
+    });
+
+    // A DIFFERENT name is the sanctioned multi-agent flow (T-HTW-14): a new
+    // agent is minted — but the result must SAY the session default is
+    // unchanged, so the caller cannot mistake the new agent for itself.
+    it('mints a sub-agent for a different name, and says the default is unchanged', async () => {
+      const before = (await storage.getAgents()).length;
+
+      const subJoin = await handler.handle(firstJoin.agentId, 'quick_join', {
+        name: 'Sub-Agent-1',
+        workspaceId: secondWorkspaceId,
+      }) as any;
+
+      expect(subJoin.agentId).not.toBe(firstJoin.agentId);
+      expect((await storage.getAgents()).length).toBe(before + 1);
+      expect(subJoin.note).toMatch(/default identity remains 'Reviewer-1'/);
+      expect(subJoin.note).toContain(subJoin.agentId);
+    });
+  });
 });

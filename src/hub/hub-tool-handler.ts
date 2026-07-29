@@ -87,10 +87,16 @@ export function createHubToolHandler(options: HubToolHandlerOptions): HubToolHan
       await ensureEnvResolved(sessionKey);
 
       try {
+        // register always mints; quick_join sees the session default so the
+        // hub handler can reuse it instead of registering an orphan
+        // (docs/known-issues.md #1). Explicit callerAgentId still applies
+        // only to stage-1+ operations.
         const agentId =
-          operation === 'register' || operation === 'quick_join'
+          operation === 'register'
             ? null
-            : identities.resolve(sessionKey, callerAgentId);
+            : operation === 'quick_join'
+              ? identities.resolve(sessionKey, undefined)
+              : identities.resolve(sessionKey, callerAgentId);
 
         const result = await hubHandler.handle(
           agentId, operation as string, args as Record<string, unknown>
