@@ -86,6 +86,53 @@ describe('Hub Storage — Filesystem Persistence', () => {
     expect(content.messages).toHaveLength(1);
   });
 
+  // Known issue #4: channel read/write key symmetry, enforced at the storage boundary
+  it('channel round-trips through the problemId key regardless of construction', async () => {
+    const storage = createFileSystemHubStorage(dataDir);
+
+    await storage.saveChannel({
+      id: 'prob-1',
+      workspaceId: 'ws-1',
+      problemId: 'prob-1',
+      messages: [],
+    });
+
+    const filePath = join(dataDir, 'hub', 'workspaces', 'ws-1', 'channels', 'prob-1.json');
+    const content = JSON.parse(await readFile(filePath, 'utf-8'));
+    expect(content.problemId).toBe('prob-1');
+
+    const loaded = await storage.getChannel('ws-1', 'prob-1');
+    expect(loaded).not.toBeNull();
+    expect(loaded!.problemId).toBe('prob-1');
+
+    // The write key comes from problemId, so appends find their own channel.
+    const count = await storage.appendMessage('ws-1', 'prob-1', {
+      id: 'msg-1',
+      agentId: 'agent-1',
+      content: 'hello',
+      timestamp: new Date().toISOString(),
+    });
+    expect(count).toBe(1);
+    expect((await storage.getChannel('ws-1', 'prob-1'))!.messages).toHaveLength(1);
+  });
+
+  it('saveChannel rejects a channel whose id does not match its problemId', async () => {
+    const storage = createFileSystemHubStorage(dataDir);
+
+    await expect(
+      storage.saveChannel({
+        id: 'minted-elsewhere',
+        workspaceId: 'ws-1',
+        problemId: 'prob-1',
+        messages: [],
+      }),
+    ).rejects.toThrow('Channel id must equal its problemId');
+
+    // Nothing was written under either key.
+    expect(await storage.getChannel('ws-1', 'prob-1')).toBeNull();
+    expect(await storage.getChannel('ws-1', 'minted-elsewhere')).toBeNull();
+  });
+
   // T-STOR-4: Agents registry persisted
   it('agents registry persisted to filesystem', async () => {
     const storage = createFileSystemHubStorage(dataDir);
