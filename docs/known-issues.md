@@ -81,6 +81,16 @@ identities. Pinned by `per-session-identity.test.ts` ("concurrent
 registration in one session"); two of those four tests fail on the unfixed
 handler. Original report kept below for the record.
 
+**Amended 2026-07-29**: that memoized promise also carried the
+`identities.register` call, so the env identity was registered under the FIRST
+caller's sessionKey only — every later MCP session awaited the settled promise,
+was never registered, and failed authenticated ops with `Register first`. Only
+the RESOLUTION is handler-wide now (a memoized `Promise<string | null>`);
+registration runs on every call under that call's own sessionKey, which
+`SessionIdentityRegistry.register` makes idempotent (it fills an empty default,
+never displaces one). Pinned by the same file's "env-var identity across
+sessions".
+
 Two `register`/`quick_join` calls running concurrently in one session both
 resolve a null session default before either result is captured, so both mint
 agents; only the first-completed becomes the implicit identity, and the other

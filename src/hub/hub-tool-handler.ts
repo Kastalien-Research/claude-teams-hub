@@ -61,24 +61,33 @@ export function createHubToolHandler(options: HubToolHandlerOptions): HubToolHan
   // Shared with other namespaces (tb.claims) when passed in via options.
   const identities = options.identityRegistry ?? new SessionIdentityRegistry();
 
+  // Only the RESOLUTION of the env identity is handler-wide (it mints or looks
+  // up one agent for the process); REGISTRATION is per session. Memoizing the
+  // registration alongside it bound the env identity to whichever sessionKey
+  // called first — every later session got the settled promise back, was never
+  // registered, and failed authenticated ops with 'Register first'.
+  //
   // Memoized as a PROMISE, not a boolean: a boolean flipped before the await
   // let a concurrent caller skip past an env resolution still in flight and
   // resolve a null default, minting an agent the env identity should have
   // been (docs/known-issues.md #5). A failed attempt clears the memo so it
   // is retried rather than poisoning every later call.
-  let envResolution: Promise<void> | null = null;
+  let envResolution: Promise<string | null> | null = null;
 
-  function ensureEnvResolved(sessionKey: string): Promise<void> {
-    envResolution ??= (async () => {
-      const resolved = await resolveAgentId(hubStorage, envAgentId, envAgentName);
-      if (resolved) {
-        identities.register(sessionKey, resolved);
-      }
-    })().catch((error: unknown) => {
-      envResolution = null;
-      throw error;
-    });
-    return envResolution;
+  async function ensureEnvResolved(sessionKey: string): Promise<void> {
+    envResolution ??= resolveAgentId(hubStorage, envAgentId, envAgentName).catch(
+      (error: unknown) => {
+        envResolution = null;
+        throw error;
+      },
+    );
+    const resolved = await envResolution;
+    // Idempotent per session: register() adds to the session's agent set and
+    // only fills an EMPTY default, so repeating it cannot displace an identity
+    // the session registered explicitly.
+    if (resolved) {
+      identities.register(sessionKey, resolved);
+    }
   }
 
   // Registration establishes the session's implicit identity, and the

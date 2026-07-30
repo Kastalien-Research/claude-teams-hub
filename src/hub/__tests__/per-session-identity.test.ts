@@ -367,4 +367,51 @@ describe('HubToolHandler — Per-Session Identity Isolation', () => {
       expect(JSON.parse(whoB.content[0].text).agentId).toBe(betaId);
     });
   });
+
+  // Known-issue #5's env-var half: ensureEnvResolved memoized the
+  // REGISTRATION together with the resolution, so `identities.register` ran
+  // once under the FIRST caller's sessionKey. Every later session awaited the
+  // settled promise, was never registered, and failed authenticated ops with
+  // 'Register first'. Only the resolution is handler-wide; registration has to
+  // happen on every call, under that call's own sessionKey.
+  describe('env-var identity across sessions', () => {
+    const ENV_AGENT_ID = '11111111-2222-3333-4444-555555555555';
+    let envHandler: HubToolHandler;
+
+    beforeEach(() => {
+      envHandler = createHubToolHandler({
+        hubStorage,
+        thoughtStore: createInMemoryThoughtStore(),
+        envAgentId: ENV_AGENT_ID,
+        envAgentName: 'Env Agent',
+      });
+    });
+
+    it('a later session acts as the env identity without registering', async () => {
+      const first = await envHandler.handle(
+        { operation: 'create_workspace', name: 'WS-A', description: 'from session A' },
+        'sess-env-a',
+      );
+      expect(JSON.parse(first.content[0].text).error).toBeUndefined();
+      expect(first.isError ?? false).toBe(false);
+
+      const second = await envHandler.handle(
+        { operation: 'create_workspace', name: 'WS-B', description: 'from session B' },
+        'sess-env-b',
+      );
+      // Unfixed, this is "Register first via the hub 'register' operation
+      // with a name." — the second session never got the env identity.
+      expect(JSON.parse(second.content[0].text).error).toBeUndefined();
+      expect(second.isError ?? false).toBe(false);
+
+      // Both sessions act as the SAME env agent.
+      const whoA = await envHandler.handle({ operation: 'whoami' }, 'sess-env-a');
+      const whoB = await envHandler.handle({ operation: 'whoami' }, 'sess-env-b');
+      expect(JSON.parse(whoA.content[0].text).agentId).toBe(ENV_AGENT_ID);
+      expect(JSON.parse(whoB.content[0].text).agentId).toBe(ENV_AGENT_ID);
+
+      // Resolution stays memoized: one agent in the store, not one per session.
+      expect(await hubStorage.getAgents()).toHaveLength(1);
+    });
+  });
 });
