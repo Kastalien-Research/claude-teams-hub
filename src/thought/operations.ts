@@ -43,12 +43,12 @@ const THOUGHT_TYPES = Object.keys(THOUGHT_TYPE_REQUIRED_FIELDS);
  */
 const TYPED_PAYLOAD_SUMMARY = [
   "decision_frame: confidence ('high'|'medium'|'low') + options (non-empty; exactly one selected:true)",
-  "action_report: actionResult { success, reversible ('yes'|'no'|'partial'), tool, target }",
+  "action_report: actionResult { success, reversible ('yes'|'no'|'partial'), tool (non-empty), target (non-empty) }",
   "belief_snapshot: beliefs.entities (non-empty)",
   "assumption_update: assumptionChange.newStatus ('believed'|'uncertain'|'refuted')",
   "context_snapshot: contextData (object)",
-  "progress: progressData { task, status ('pending'|'in_progress'|'done'|'blocked') }",
-  "action_receipt: receiptData { toolName, match (boolean) }",
+  "progress: progressData { task (non-empty), status ('pending'|'in_progress'|'done'|'blocked') }",
+  "action_receipt: receiptData { toolName (non-empty), match (boolean) }",
   "reasoning, finding, synthesis, question, conclusion: no payload beyond `thought`",
 ].join("; ");
 
@@ -153,12 +153,13 @@ export const THOUGHT_OPERATIONS: OperationDefinition[] = [
         },
         actionResult: {
           type: "object",
-          description: "Required for thoughtType 'action_report'.",
+          description:
+            "Required for thoughtType 'action_report'. tool and target must be non-empty strings — the server rejects \"\".",
           properties: {
             success: { type: "boolean" },
             reversible: { type: "string", enum: ["yes", "no", "partial"] },
-            tool: { type: "string" },
-            target: { type: "string" },
+            tool: { type: "string", minLength: 1 },
+            target: { type: "string", minLength: 1 },
             sideEffects: { type: "array", items: { type: "string" } },
           },
           required: ["success", "reversible", "tool", "target"],
@@ -214,9 +215,10 @@ export const THOUGHT_OPERATIONS: OperationDefinition[] = [
         },
         progressData: {
           type: "object",
-          description: "Required for thoughtType 'progress'.",
+          description:
+            "Required for thoughtType 'progress'. task must be a non-empty string — the server rejects \"\".",
           properties: {
-            task: { type: "string" },
+            task: { type: "string", minLength: 1 },
             status: {
               type: "string",
               enum: ["pending", "in_progress", "done", "blocked"],
@@ -228,9 +230,9 @@ export const THOUGHT_OPERATIONS: OperationDefinition[] = [
         receiptData: {
           type: "object",
           description:
-            "Required for thoughtType 'action_receipt'. Only toolName and match are enforced.",
+            "Required for thoughtType 'action_receipt'. Only toolName and match are enforced; toolName must be a non-empty string — the server rejects \"\".",
           properties: {
-            toolName: { type: "string" },
+            toolName: { type: "string", minLength: 1 },
             expected: { type: "string" },
             actual: { type: "string" },
             match: { type: "boolean" },

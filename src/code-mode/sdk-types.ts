@@ -24,14 +24,18 @@ interface TB {
    * enough for a typed form:
    *   decision_frame    confidence + options (non-empty, exactly one selected: true)
    *   action_report     actionResult { success, reversible, tool, target }
-   *   belief_snapshot   beliefs.entities (non-empty)
+   *   belief_snapshot   beliefs.entities (non-empty; item keys unvalidated)
    *   assumption_update assumptionChange.newStatus
    *   context_snapshot  contextData (any object)
    *   progress          progressData { task, status }
    *   action_receipt    receiptData { toolName, match }
    *   reasoning, finding, synthesis, question, conclusion — no payload
    * Optional keys inside those payloads (sideEffects, constraints, risks,
-   * expected/actual, reason, ...) are stored but never required.
+   * expected/actual, reason, entity name/state, assumption text/oldStatus, ...)
+   * are stored but never required.
+   * The required strings must be non-empty: "" is rejected for
+   * actionResult.tool, actionResult.target, progressData.task and
+   * receiptData.toolName.
    * branchId additionally requires branchFromThought.
    */
   thought(input: {
@@ -52,8 +56,8 @@ interface TB {
     confidence?: "high" | "medium" | "low";
     options?: Array<{ label: string; selected: boolean; reason?: string }>;
     actionResult?: { success: boolean; reversible: "yes" | "no" | "partial"; tool: string; target: string; sideEffects?: string[] };
-    beliefs?: { entities: Array<{ name: string; state: string }>; constraints?: string[]; risks?: string[] };
-    assumptionChange?: { text: string; oldStatus: string; newStatus: "believed" | "uncertain" | "refuted"; trigger?: string; downstream?: number[] };
+    beliefs?: { entities: Array<{ name?: string; state?: string }>; constraints?: string[]; risks?: string[] };
+    assumptionChange?: { text?: string; oldStatus?: string; newStatus: "believed" | "uncertain" | "refuted"; trigger?: string; downstream?: number[] };
     contextData?: { toolsAvailable?: string[]; systemPromptHash?: string; modelId?: string; constraints?: string[]; dataSourcesAccessed?: string[] };
     progressData?: { task: string; status: "pending" | "in_progress" | "done" | "blocked"; note?: string };
     receiptData?: { toolName: string; match: boolean; expected?: string; actual?: string; residual?: string; durationMs?: number };

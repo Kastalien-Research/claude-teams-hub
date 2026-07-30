@@ -8,26 +8,32 @@ const OptionSchema = z.object({
   reason: z.string().optional().describe("Why this option was or wasn't chosen"),
 });
 
+// Field-level strictness here must equal what ThoughtHandler's per-type
+// validators enforce (src/thought-handler.ts) and what the catalog advertises
+// (src/thought/operations.ts). The handler is the source of truth: it rejects
+// empty strings for actionResult.tool/target, progressData.task and
+// receiptData.toolName via falsy checks, and enforces nothing else inside
+// these payloads.
 const ActionResultSchema = z.object({
   success: z.boolean().describe("Whether the action was successful"),
   reversible: z.enum(["yes", "no", "partial"]).describe("Can this action be reversed?"),
-  tool: z.string().describe("The tool used to perform this action"),
-  target: z.string().describe("Target of the action"),
+  tool: z.string().min(1).describe("The tool used to perform this action"),
+  target: z.string().min(1).describe("Target of the action"),
   sideEffects: z.array(z.string()).optional().describe("Any side effects caused by the action"),
 });
 
 const BeliefSchema = z.object({
   entities: z.array(z.object({
-    name: z.string(),
-    state: z.string(),
+    name: z.string().optional(),
+    state: z.string().optional(),
   })).describe("Important entities and their current state"),
   constraints: z.array(z.string()).optional().describe("Known constraints on the work"),
   risks: z.array(z.string()).optional().describe("Identified risks"),
 });
 
 const AssumptionChangeSchema = z.object({
-  text: z.string().describe("The text of the assumption"),
-  oldStatus: z.string().describe("The previous status of this assumption"),
+  text: z.string().optional().describe("The text of the assumption"),
+  oldStatus: z.string().optional().describe("The previous status of this assumption"),
   newStatus: z.enum(["believed", "uncertain", "refuted"]).describe("The newly decided status"),
   trigger: z.string().optional().describe("What triggered this assumption change"),
   downstream: z.array(z.number()).optional().describe("Downstream thoughts affected"),
@@ -42,13 +48,13 @@ const ContextDataSchema = z.object({
 });
 
 const ProgressDataSchema = z.object({
-  task: z.string().describe("The name of the task being tracked"),
+  task: z.string().min(1).describe("The name of the task being tracked"),
   status: z.enum(["pending", "in_progress", "done", "blocked"]).describe("Status of the task"),
   note: z.string().optional().describe("Optional note on progress"),
 });
 
 const ReceiptDataSchema = z.object({
-  toolName: z.string().describe("The tool the receipt accounts for"),
+  toolName: z.string().min(1).describe("The tool the receipt accounts for"),
   expected: z.string().optional().describe("What the call was expected to do"),
   actual: z.string().optional().describe("What the call actually did"),
   match: z.boolean().describe("Whether actual matched expected"),

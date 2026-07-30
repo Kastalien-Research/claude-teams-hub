@@ -24,6 +24,7 @@ import { HUB_SDK_METHODS, HUB_OPERATION_SDK_CALLS } from "../hub-sdk-methods.js"
 import { TB_SDK_TYPES } from "../sdk-types.js";
 import { HUB_OPERATIONS } from "../../hub/operations.js";
 import { THOUGHT_TYPE_REQUIRED_FIELDS } from "../../thought/operations.js";
+import { thoughtToolInputSchema } from "../../thought/tool.js";
 import {
   STATIC_RESOURCES,
   RESOURCE_TEMPLATES,
@@ -222,7 +223,12 @@ describe("hub catalog entries name their callable (discovery/execute parity)", (
  * cannot claim a contract the server does not enforce, or miss one it does.
  */
 describe("thoughtbox_thought publishes its typed-payload contract", () => {
-  /** A minimal payload that satisfies each type's validator. */
+  /**
+   * The minimal payload the catalog advertises for each type: only the keys
+   * its property schemas mark required. belief_snapshot's entities carry no
+   * required item keys, so `[{}]` is the advertised minimum — the same payload
+   * every surface (catalog, zod, handler) has to accept.
+   */
   const MINIMAL_PAYLOADS: Record<string, Record<string, unknown>> = {
     reasoning: {},
     finding: {},
@@ -236,12 +242,75 @@ describe("thoughtbox_thought publishes its typed-payload contract", () => {
     action_report: {
       actionResult: { success: true, reversible: "yes", tool: "Bash", target: "/tmp" },
     },
-    belief_snapshot: { beliefs: { entities: [{ name: "e", state: "s" }] } },
+    belief_snapshot: { beliefs: { entities: [{}] } },
     assumption_update: { assumptionChange: { newStatus: "refuted" } },
     context_snapshot: { contextData: {} },
     progress: { progressData: { task: "t", status: "done" } },
     action_receipt: { receiptData: { toolName: "Bash", match: true } },
   };
+
+  /**
+   * The four payload strings the handler rejects when empty (falsy checks in
+   * validateActionReport / validateProgress / validateActionReceipt). Each
+   * case names the catalog path that has to publish the same constraint.
+   */
+  const EMPTY_STRING_CASES: Array<{
+    thoughtType: string;
+    property: string;
+    field: string;
+    payload: Record<string, unknown>;
+  }> = [
+    {
+      thoughtType: "action_report",
+      property: "actionResult",
+      field: "tool",
+      payload: {
+        actionResult: { success: true, reversible: "yes", tool: "", target: "/tmp" },
+      },
+    },
+    {
+      thoughtType: "action_report",
+      property: "actionResult",
+      field: "target",
+      payload: {
+        actionResult: { success: true, reversible: "yes", tool: "Bash", target: "" },
+      },
+    },
+    {
+      thoughtType: "progress",
+      property: "progressData",
+      field: "task",
+      payload: { progressData: { task: "", status: "done" } },
+    },
+    {
+      thoughtType: "action_receipt",
+      property: "receiptData",
+      field: "toolName",
+      payload: { receiptData: { toolName: "", match: true } },
+    },
+  ];
+
+  /** The catalog's schema for one key inside a payload object. */
+  function catalogFieldSchema(property: string, field: string) {
+    const op = buildSearchCatalog().operations["thought"]!["thoughtbox_thought"]!;
+    const properties = (op.inputSchema as { properties: Record<string, unknown> })
+      .properties;
+    const payloadSchema = properties[property] as {
+      properties: Record<string, unknown>;
+    };
+    return payloadSchema.properties[field] as {
+      type: string;
+      minLength?: number;
+    };
+  }
+
+  function zodParse(input: Record<string, unknown>) {
+    return thoughtToolInputSchema.safeParse({
+      thought: "contract probe",
+      nextThoughtNeeded: false,
+      ...input,
+    });
+  }
 
   async function submit(input: Record<string, unknown>) {
     const storage = new InMemoryStorage();
@@ -281,6 +350,55 @@ describe("thoughtbox_thought publishes its typed-payload contract", () => {
     for (const [thoughtType, payload] of Object.entries(MINIMAL_PAYLOADS)) {
       const { ok, text } = await submit({ thoughtType, ...payload });
       expect(ok, `${thoughtType} rejected a minimal valid payload: ${text}`).toBe(true);
+    }
+  });
+
+  /**
+   * The tests above reach ThoughtHandler directly, which bypasses the zod
+   * schema real MCP callers go through. A payload the catalog advertises is
+   * only actually usable if BOTH gates pass it, so assert them as a pair.
+   */
+  it("the zod tool schema accepts every advertised minimal payload", () => {
+    for (const [thoughtType, payload] of Object.entries(MINIMAL_PAYLOADS)) {
+      const parsed = zodParse({ thoughtType, ...payload });
+      expect(
+        parsed.success,
+        `${thoughtType} minimal payload rejected by zod: ${
+          parsed.success ? "" : JSON.stringify(parsed.error.issues)
+        }`,
+      ).toBe(true);
+    }
+  });
+
+  it("zod and the handler agree on every advertised minimal payload", async () => {
+    for (const [thoughtType, payload] of Object.entries(MINIMAL_PAYLOADS)) {
+      const zodOk = zodParse({ thoughtType, ...payload }).success;
+      const { ok: handlerOk } = await submit({ thoughtType, ...payload });
+      expect(
+        zodOk,
+        `${thoughtType}: zod=${zodOk} handler=${handlerOk} — surfaces disagree`,
+      ).toBe(handlerOk);
+    }
+  });
+
+  it("the catalog publishes minLength for the strings the handler needs non-empty", () => {
+    for (const { property, field } of EMPTY_STRING_CASES) {
+      const schema = catalogFieldSchema(property, field);
+      expect(schema.type, `${property}.${field}`).toBe("string");
+      expect(schema.minLength, `${property}.${field} must publish minLength`).toBe(1);
+    }
+  });
+
+  it("empty strings are rejected by zod and the handler alike", async () => {
+    for (const { thoughtType, property, field, payload } of EMPTY_STRING_CASES) {
+      const parsed = zodParse({ thoughtType, ...payload });
+      expect(
+        parsed.success,
+        `zod accepted empty ${property}.${field}`,
+      ).toBe(false);
+
+      const { ok } = await submit({ thoughtType, ...payload });
+      expect(ok, `handler accepted empty ${property}.${field}`).toBe(false);
     }
   });
 
