@@ -4,7 +4,9 @@
  * gets type hints without loading operation catalogs.
  *
  * IMPORTANT: This file must stay in sync with the source Zod schemas:
- * - thought: src/thought/tool.ts (thoughtToolInputSchema)
+ * - thought: src/thought/tool.ts (thoughtToolInputSchema); the per-thoughtType
+ *            payload requirements come from THOUGHT_TYPE_REQUIRED_FIELDS in
+ *            src/thought/operations.ts, which transcribes the validator
  * - session: src/sessions/tool.ts (sessionToolInputSchema)
  * - hub:     src/hub/operations.ts (HUB_OPERATIONS catalog)
  * - vars:    src/code-mode/vars-operations.ts (VARS_OPERATIONS catalog)
@@ -14,10 +16,31 @@ export const TB_SDK_TYPES = `\`\`\`ts
 type HubProfile = "MANAGER" | "ARCHITECT" | "DEBUGGER" | "SECURITY" | "RESEARCHER" | "REVIEWER";
 
 interface TB {
-  /** Submit a structured thought. Source: src/thought/tool.ts */
+  /**
+   * Submit a structured thought. Source: src/thought/tool.ts
+   *
+   * thoughtType selects a payload that the server REQUIRES — the call throws
+   * without it, and thought/nextThoughtNeeded/thoughtType alone are never
+   * enough for a typed form:
+   *   decision_frame    confidence + options (non-empty, exactly one selected: true)
+   *   action_report     actionResult { success, reversible, tool, target }
+   *   belief_snapshot   beliefs.entities (non-empty; item keys unvalidated)
+   *   assumption_update assumptionChange.newStatus
+   *   context_snapshot  contextData (any object)
+   *   progress          progressData { task, status }
+   *   action_receipt    receiptData { toolName, match }
+   *   reasoning, finding, synthesis, question, conclusion — no payload
+   * Optional keys inside those payloads (sideEffects, constraints, risks,
+   * expected/actual, reason, entity name/state, assumption text/oldStatus, ...)
+   * are stored but never required.
+   * The required strings must be non-empty: "" is rejected for
+   * actionResult.tool, actionResult.target, progressData.task and
+   * receiptData.toolName.
+   * branchId additionally requires branchFromThought.
+   */
   thought(input: {
     thought: string;
-    thoughtType: "reasoning" | "decision_frame" | "action_report" | "belief_snapshot" | "assumption_update" | "context_snapshot" | "progress" | "finding" | "synthesis" | "question" | "conclusion";
+    thoughtType: "reasoning" | "decision_frame" | "action_report" | "belief_snapshot" | "assumption_update" | "context_snapshot" | "progress" | "action_receipt" | "finding" | "synthesis" | "question" | "conclusion";
     nextThoughtNeeded: boolean;
     thoughtNumber?: number;
     totalThoughts?: number;
@@ -33,10 +56,11 @@ interface TB {
     confidence?: "high" | "medium" | "low";
     options?: Array<{ label: string; selected: boolean; reason?: string }>;
     actionResult?: { success: boolean; reversible: "yes" | "no" | "partial"; tool: string; target: string; sideEffects?: string[] };
-    beliefs?: { entities: Array<{ name: string; state: string }>; constraints?: string[]; risks?: string[] };
-    assumptionChange?: { text: string; oldStatus: string; newStatus: "believed" | "uncertain" | "refuted"; trigger?: string; downstream?: number[] };
+    beliefs?: { entities: Array<{ name?: string; state?: string }>; constraints?: string[]; risks?: string[] };
+    assumptionChange?: { text?: string; oldStatus?: string; newStatus: "believed" | "uncertain" | "refuted"; trigger?: string; downstream?: number[] };
     contextData?: { toolsAvailable?: string[]; systemPromptHash?: string; modelId?: string; constraints?: string[]; dataSourcesAccessed?: string[] };
     progressData?: { task: string; status: "pending" | "in_progress" | "done" | "blocked"; note?: string };
+    receiptData?: { toolName: string; match: boolean; expected?: string; actual?: string; residual?: string; durationMs?: number };
     agentId?: string;
     agentName?: string;
   }): Promise<unknown>;
@@ -61,6 +85,10 @@ interface TB {
    * channels. Call register or quickJoin once per session — the returned
    * agentId is then implicit for every other call. Pass agentId explicitly
    * only to act as another agent registered in this session.
+   *
+   * These camelCase method names are what you call here; thoughtbox_search
+   * lists the same operations under their snake_case wire names and carries
+   * the callable name in each entry's sdkMethod field.
    * Source: src/hub/operations.ts
    */
   hub: {

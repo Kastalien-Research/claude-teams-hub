@@ -61,7 +61,18 @@ describe("createMcpServer tool surface", () => {
       const catalog = JSON.parse(contents[0]?.text as string) as {
         version: string;
         publicTools: Array<{ name: string }>;
-        operations: Record<string, Record<string, { title: string; description: string }>>;
+        operations: Record<
+          string,
+          Record<
+            string,
+            {
+              title: string;
+              description: string;
+              inputSchema?: { properties?: Record<string, unknown>; allOf?: unknown[] };
+              sdkMethod?: string;
+            }
+          >
+        >;
       };
       expect(catalog.version).toBe("1.0.0");
       expect(catalog.publicTools.map((tool) => tool.name)).toEqual([
@@ -77,6 +88,33 @@ describe("createMcpServer tool surface", () => {
       expect(catalog.operations["thought"]?.["thoughtbox_thought"]?.description).toEqual(
         expect.any(String),
       );
+
+      // KNOWN-ISSUES #3: the served catalog must name the callable for every
+      // hub operation, since its own keys are snake_case and tb.hub is not.
+      const hub = catalog.operations["hub"]!;
+      const hubNames = Object.keys(hub);
+      expect(hubNames).toHaveLength(28);
+      expect(hubNames.filter((name) => !hub[name]!.sdkMethod)).toEqual([]);
+      expect(hub["review_proposal"]?.sdkMethod).toBe("tb.hub.reviewProposal");
+
+      // KNOWN-ISSUES #2: the served thoughtbox_thought schema must document
+      // the payloads each thoughtType requires, not just the three base
+      // fields. Contract details are pinned in catalog-drift.test.ts.
+      const thought = catalog.operations["thought"]!["thoughtbox_thought"]!;
+      expect(thought.inputSchema?.allOf).toEqual(expect.any(Array));
+      expect((thought.inputSchema!.allOf as unknown[]).length).toBe(7);
+      for (const payload of [
+        "options",
+        "actionResult",
+        "beliefs",
+        "assumptionChange",
+        "contextData",
+        "progressData",
+        "receiptData",
+      ]) {
+        expect(thought.inputSchema?.properties).toHaveProperty(payload);
+        expect(thought.description).toContain(payload);
+      }
 
       const opDetail = await client.readResource({
         uri: "thoughtbox://gateway/operations/thoughtbox_thought",

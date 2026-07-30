@@ -29,7 +29,10 @@ export const SEARCH_TOOL = {
   name: "thoughtbox_search",
   description: `Discover Thoughtbox operations, prompts, and resources by writing JavaScript that queries the catalog.
 
-The \`catalog\` object is available in scope:
+Sandbox contract — this is a read-only discovery sandbox, not an execution one:
+- \`catalog\` is already parsed and frozen in scope. Return or log from it; do not re-parse anything. (The raw JSON string is also present as \`__catalogJson\`, but you never need it.)
+- \`console\`, \`setTimeout\` and \`clearTimeout\` are the only other globals. There is no \`tb\` and no network or filesystem access — nothing here can run an operation.
+- To RUN what you discover, call thoughtbox_execute. Catalog keys are the wire operation names (snake_case); hub entries additionally carry \`sdkMethod\`, the fully-qualified call to use there — e.g. \`review_proposal\` has \`sdkMethod: "tb.hub.reviewProposal"\`. Use \`sdkMethod\` verbatim; the snake_case key is not callable.
 
 interface SearchCatalog {
   publicTools: Array<{ name: string; description: string; operations?: string[] }>;
@@ -38,6 +41,8 @@ interface SearchCatalog {
     description: string;
     category: string;
     inputSchema?: object;
+    /** Fully-qualified thoughtbox_execute call, e.g. "tb.hub.reviewProposal". Present on all hub entries. */
+    sdkMethod?: string;
   }>>;
   prompts: Array<{ name: string; description: string; args: string[] }>;
   resources: Array<{ name: string; uri: string; description: string; mimeType: string }>;
@@ -53,7 +58,8 @@ Examples:
 - Find session operations: \`async () => catalog.operations.session\`
 - Search by keyword: \`async () => { const q = "workspace"; return Object.entries(catalog.operations).flatMap(([mod, ops]) => Object.entries(ops).filter(([_, op]) => op.description.toLowerCase().includes(q)).map(([name, op]) => ({ module: mod, name, title: op.title }))) }\`
 - Find prompts: \`async () => catalog.prompts.filter(p => p.name.includes('interleaved'))\`
-- List resources: \`async () => catalog.resources.map(r => ({ name: r.name, uri: r.uri }))\``,
+- List resources: \`async () => catalog.resources.map(r => ({ name: r.name, uri: r.uri }))\`
+- Get callable hub names: \`async () => Object.entries(catalog.operations.hub).map(([name, op]) => ({ name, sdkMethod: op.sdkMethod }))\``,
   inputSchema: searchToolInputSchema,
   annotations: {
     readOnlyHint: true,
