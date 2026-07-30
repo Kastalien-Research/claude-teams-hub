@@ -37,9 +37,9 @@ export interface ResourceTemplateDef {
 export const STATIC_RESOURCES: StaticResourceDef[] = [
   {
     key: "status",
-    name: "Team Hub Server Status",
+    name: "Claude Teams Hub Server Status",
     uri: "system://status",
-    description: "Health snapshot of the team hub server",
+    description: "Health snapshot of the Claude Teams Hub server",
     mimeType: "application/json",
   },
   {

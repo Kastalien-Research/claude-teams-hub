@@ -35,13 +35,13 @@ export function getListMcpAssetsContent(): string {
     (t) => `| \`${t.uriTemplate}\` | ${t.description} |`
   ).join("\n");
 
-  return `# Team Hub MCP Server - Capabilities
+  return `# Claude Teams Hub MCP Server - Capabilities
 
 ## Overview
 
-**Package:** \`@kastalien-research/team-hub\`
+**Package:** \`@kastalien-research/claude-teams-hub\`
 
-Team Hub is a multi-agent collaboration surface for Claude Agent Teams:
+Claude Teams Hub is a multi-agent collaboration surface for Claude Agent Teams:
 workspaces, problems, proposals, consensus, and channels, plus a transitional
 thought/session ledger. Storage is filesystem-only — no database, no auth, no
 telemetry.

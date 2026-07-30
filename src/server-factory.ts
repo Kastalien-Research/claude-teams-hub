@@ -150,7 +150,7 @@ export async function createMcpServer(args: CreateMcpServerArgs = {}): Promise<M
   const config = configSchema.parse(args.config ?? {});
   const logger = args.logger ?? defaultLogger;
 
-  const TEAM_HUB_INSTRUCTIONS = `Team Hub is a multi-agent coordination server using Code Mode.
+  const TEAM_HUB_INSTRUCTIONS = `Claude Teams Hub is a multi-agent coordination server using Code Mode.
 
 Two tools:
 - \`thoughtbox_search\`: write JavaScript to query the operation/prompt/resource catalog
