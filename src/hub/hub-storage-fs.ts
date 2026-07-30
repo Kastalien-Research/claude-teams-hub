@@ -209,8 +209,17 @@ export function createFileSystemHubStorage(dataDir: string): HubStorage {
     },
 
     async saveChannel(channel) {
+      // Channels are addressed by problemId on every read path (getChannel,
+      // appendMessage, resource URIs), so the write key is problemId too and
+      // a mismatched id is rejected rather than persisted at an address that
+      // disagrees with it.
+      if (channel.id !== channel.problemId) {
+        throw new Error(
+          `Channel id must equal its problemId: ${channel.id} !== ${channel.problemId}`,
+        );
+      }
       await writeJson(
-        join(workspaceDir(channel.workspaceId), 'channels', `${channel.id}.json`),
+        join(workspaceDir(channel.workspaceId), 'channels', `${channel.problemId}.json`),
         channel,
       );
     },

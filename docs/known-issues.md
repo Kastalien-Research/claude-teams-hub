@@ -55,7 +55,17 @@ keys are also snake_case (`review_proposal`) while the executable SDK is
 camelCase (`tb.hub.reviewProposal`), so nothing discovered is directly
 callable by its discovered name.
 
-## 4. `hub-storage-fs` channel read/write key asymmetry
+## 4. ~~`hub-storage-fs` channel read/write key asymmetry~~ FIXED
+
+**Fixed 2026-07-29**: `saveChannel` now writes to
+`channels/${channel.problemId}.json` — the same key `getChannel` reads — and
+throws `Channel id must equal its problemId: <id> !== <problemId>` when the two
+disagree, so a caller minting its own channel id gets a loud failure instead of
+a silent split. The invariant is stated in the `HubStorage.saveChannel` contract
+in `hub-types.ts` rather than left to `problems.ts`'s construction convention.
+Pinned by two cases in `storage.test.ts` (problemId-key round trip including
+`appendMessage`, and the rejected mismatch writing nothing under either key).
+Original report kept below for the record.
 
 `getChannel(workspaceId, problemId)` reads `channels/${problemId}.json` while
 `saveChannel(channel)` writes `channels/${channel.id}.json`. The invariant

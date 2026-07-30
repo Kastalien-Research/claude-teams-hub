@@ -85,6 +85,14 @@ export function createInMemoryHubStorage(): HubStorage {
       return channels.get(workspaceId)?.get(problemId) ?? null;
     },
     async saveChannel(channel) {
+      // Same rejection as hub-storage-fs: the key is problemId on every read
+      // path, so a channel whose id disagrees with its address is refused here
+      // too — otherwise tests would pass behavior that throws in production.
+      if (channel.id !== channel.problemId) {
+        throw new Error(
+          `Channel id must equal its problemId: ${channel.id} !== ${channel.problemId}`,
+        );
+      }
       if (!channels.has(channel.workspaceId)) channels.set(channel.workspaceId, new Map());
       channels.get(channel.workspaceId)!.set(channel.problemId, channel);
     },

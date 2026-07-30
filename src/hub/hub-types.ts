@@ -265,6 +265,13 @@ export interface HubStorage {
 
   // Channel operations
   getChannel(workspaceId: string, problemId: string): Promise<Channel | null>;
+
+  /**
+   * Persists a channel at the address its reads use — `problemId`, the key
+   * `getChannel` takes. `channel.id` must equal `channel.problemId`;
+   * implementations throw on mismatch rather than writing a record whose
+   * stored id disagrees with its address.
+   */
   saveChannel(channel: Channel): Promise<void>;
 
   /**
