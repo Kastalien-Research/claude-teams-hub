@@ -29,7 +29,7 @@ describe('Channel Resources', () => {
     // Directly test the hub storage channel read pattern
     const wsId = 'ws-1';
     await hubStorage.saveChannel({
-      id: 'ch-1',
+      id: 'prob-1',
       workspaceId: wsId,
       problemId: 'prob-1',
       messages: [
