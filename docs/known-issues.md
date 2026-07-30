@@ -64,7 +64,32 @@ constructs channels with `id: problemId` — nothing enforces it at the storage
 boundary, so any future caller minting its own channel id silently splits
 read and write paths.
 
-## 5. Concurrent first registrations in one MCP session race for the default
+## 5. ~~Concurrent first registrations in one MCP session race for the default~~ FIXED
+
+**Fixed 2026-07-29**: the tool handler now serializes registration per
+sessionKey with a promise-chain mutex (`withRegistrationLock` in
+`hub-tool-handler.ts`), making the resolve → register → capture window atomic.
+Lock acquisition follows call order, so the FIRST-INITIATED registration
+becomes the session default and every later one observes it: concurrent
+same-name `quick_join`s now take issue #1's reuse path (one agent, both
+callers holding the same identity, membership real in both workspaces)
+instead of minting two. A concurrent DIFFERENT-name `quick_join` still mints
+a sub-agent — the T-HTW-14 flow — but now sees the default and returns the
+`note` saying so. `ensureEnvResolved` memoizes its promise rather than a
+boolean flipped before the await, which was the same window for env-var
+identities. Pinned by `per-session-identity.test.ts` ("concurrent
+registration in one session"); two of those four tests fail on the unfixed
+handler. Original report kept below for the record.
+
+**Amended 2026-07-29**: that memoized promise also carried the
+`identities.register` call, so the env identity was registered under the FIRST
+caller's sessionKey only — every later MCP session awaited the settled promise,
+was never registered, and failed authenticated ops with `Register first`. Only
+the RESOLUTION is handler-wide now (a memoized `Promise<string | null>`);
+registration runs on every call under that call's own sessionKey, which
+`SessionIdentityRegistry.register` makes idempotent (it fills an empty default,
+never displaces one). Pinned by the same file's "env-var identity across
+sessions".
 
 Two `register`/`quick_join` calls running concurrently in one session both
 resolve a null session default before either result is captured, so both mint
