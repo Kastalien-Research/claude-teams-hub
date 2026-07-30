@@ -263,7 +263,7 @@ async function startHttpServer() {
   eventStream.mount(app);
 
   const httpServer = app.listen(port, () => {
-    console.log(`Team Hub MCP Server listening on port ${port}`);
+    console.log(`Claude Teams Hub MCP Server listening on port ${port}`);
   });
 
   const shutdown = async () => {

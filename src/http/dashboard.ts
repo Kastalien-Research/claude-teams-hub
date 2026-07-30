@@ -22,7 +22,7 @@ export const DASHBOARD_HTML: string = String.raw`<!doctype html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Team Hub — live</title>
+<title>Claude Teams Hub — live</title>
 <style>
   :root {
     color-scheme: light;
@@ -347,7 +347,7 @@ export const DASHBOARD_HTML: string = String.raw`<!doctype html>
 </head>
 <body>
 <header>
-  <h1>Team Hub</h1>
+  <h1>Claude Teams Hub</h1>
   <select id="ws-select" aria-label="Workspace"></select>
   <span class="ws-id" id="ws-id"></span>
   <span class="spacer"></span>
