@@ -24,6 +24,7 @@ import { HUB_SDK_METHODS, HUB_OPERATION_SDK_CALLS } from "../hub-sdk-methods.js"
 import { TB_SDK_TYPES } from "../sdk-types.js";
 import { HUB_OPERATIONS } from "../../hub/operations.js";
 import { REVIEW_VERDICTS } from "../../hub/hub-types.js";
+import { EXPECTATION_ASSESSMENTS } from "../../hub/decision-types.js";
 import { THOUGHT_TYPE_REQUIRED_FIELDS } from "../../thought/operations.js";
 import { thoughtToolInputSchema } from "../../thought/tool.js";
 import {
@@ -170,11 +171,11 @@ describe("static catalog single-registry (drift guard)", () => {
  * reading the single HUB_SDK_METHODS map.
  */
 describe("hub catalog entries name their callable (discovery/execute parity)", () => {
-  it("every one of the 29 hub operations carries an sdkMethod", () => {
+  it("every one of the 35 hub operations carries an sdkMethod", () => {
     const hub = buildSearchCatalog().operations["hub"]!;
     const names = Object.keys(hub);
-    expect(names).toHaveLength(29);
-    expect(HUB_OPERATIONS).toHaveLength(29);
+    expect(names).toHaveLength(35);
+    expect(HUB_OPERATIONS).toHaveLength(35);
 
     const missing = names.filter((name) => !hub[name]!.sdkMethod);
     expect(missing).toEqual([]);
@@ -521,5 +522,48 @@ describe("review verdict vocabulary", () => {
       expect(op.description).toContain(verdict);
     }
     expect(op.description).not.toContain("reject");
+  });
+});
+
+// The same invariant, applied to the decision ledger's one caller-supplied
+// enum. Same failure mode, same three surfaces: the catalog publishes it, the
+// SDK declaration republishes it, and hub-handler is what actually validates
+// it — an assessment the union lacks would otherwise reach storage and read as
+// "not a contradiction", silently never raising the health flag.
+describe("expectation assessment vocabulary", () => {
+  const outcomeOp = () => {
+    const op = HUB_OPERATIONS.find((o) => o.name === "record_outcome")!;
+    return (op.inputSchema.properties as Record<string, { enum?: string[] }>)[
+      "expectationAssessment"
+    ]!;
+  };
+
+  it("the published assessment enum is exactly the ExpectationAssessment union", () => {
+    expect(outcomeOp().enum!.slice().sort()).toEqual([...EXPECTATION_ASSESSMENTS].sort());
+  });
+
+  it("the tb SDK declaration names every assessment and no others", () => {
+    const declared = TB_SDK_TYPES.match(
+      /expectationAssessment\?: ((?:"[a-z-]+"(?: \| )?)+)/,
+    )![1]!;
+    const values = declared.split(" | ").map((v) => v.replace(/"/g, ""));
+    expect(values.slice().sort()).toEqual([...EXPECTATION_ASSESSMENTS].sort());
+  });
+
+  it("the operation description names the assessments it accepts", () => {
+    const op = HUB_OPERATIONS.find((o) => o.name === "record_outcome")!;
+    for (const assessment of EXPECTATION_ASSESSMENTS) {
+      expect(op.description).toContain(assessment);
+    }
+  });
+
+  it("every decisions-category operation is stage 1 and hub-global", () => {
+    const ops = HUB_OPERATIONS.filter((o) => o.category === "decisions");
+    expect(ops).toHaveLength(6);
+    expect(ops.every((o) => o.stage === 1)).toBe(true);
+    // workspaceId is context on the record, never a required access scope.
+    expect(
+      ops.filter((o) => (o.inputSchema.required ?? []).includes("workspaceId")),
+    ).toEqual([]);
   });
 });

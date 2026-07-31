@@ -42,6 +42,12 @@ export const HUB_SDK_METHODS: Record<string, string> = {
   postSystemMessage: "post_system_message",
   workspaceStatus: "workspace_status",
   workspaceDigest: "workspace_digest",
+  recordDecision: "record_decision",
+  recordAssumption: "record_assumption",
+  challengeAssumption: "challenge_assumption",
+  supersedeDecision: "supersede_decision",
+  recordOutcome: "record_outcome",
+  consultDecisions: "consult_decisions",
 };
 
 /**

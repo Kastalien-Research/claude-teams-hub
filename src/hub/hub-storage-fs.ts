@@ -16,6 +16,11 @@ import type {
   Channel,
 } from './hub-types.js';
 import { statusAfterReview } from './hub-types.js';
+import type {
+  AssumptionRecord,
+  DecisionRecord,
+  OutcomeRecord,
+} from './decision-types.js';
 
 /**
  * Single-writer storage: append operations below are read-modify-write on
@@ -70,6 +75,22 @@ async function readdirOrWarn(dir: string): Promise<string[]> {
   }
 }
 
+/**
+ * Reads every `.json` record in a collection directory, dropping the ones that
+ * fail — the loop the workspace-scoped list* readers write inline, factored out
+ * because the decision ledger has three collections shaped identically.
+ */
+async function listRecords<T>(dir: string): Promise<T[]> {
+  const files = await readdirOrWarn(dir);
+  const results: T[] = [];
+  for (const file of files) {
+    if (!file.endsWith('.json')) continue;
+    const record = await readJson<T>(join(dir, file));
+    if (record) results.push(record);
+  }
+  return results;
+}
+
 async function writeJson(path: string, data: unknown): Promise<void> {
   const dir = dirname(path);
   await ensureDir(dir);
@@ -79,6 +100,7 @@ async function writeJson(path: string, data: unknown): Promise<void> {
 export function createFileSystemHubStorage(dataDir: string): HubStorage {
   const hubDir = join(dataDir, 'hub');
   const agentsPath = join(hubDir, 'agents.json');
+  const decisionsDir = join(hubDir, 'decisions');
 
   function workspaceDir(workspaceId: string): string {
     return join(hubDir, 'workspaces', workspaceId);
@@ -249,6 +271,53 @@ export function createFileSystemHubStorage(dataDir: string): HubStorage {
       channel.messages.push(message);
       await this.saveChannel(channel);
       return channel.messages.length;
+    },
+
+    // Decision ledger operations
+    //
+    // Flat one-JSON-doc-per-record under the hub root, NOT under workspaces/:
+    // the ledger is hub-global, and the layout is deliberately something a
+    // consultation hook can read with a glob and a json.load, with no server
+    // in the path.
+    async getDecision(decisionId) {
+      return readJson<DecisionRecord>(join(decisionsDir, 'records', `${decisionId}.json`));
+    },
+
+    async saveDecision(decision) {
+      await writeJson(join(decisionsDir, 'records', `${decision.id}.json`), decision);
+    },
+
+    async listDecisions() {
+      return listRecords<DecisionRecord>(join(decisionsDir, 'records'));
+    },
+
+    async getAssumption(assumptionId) {
+      return readJson<AssumptionRecord>(join(decisionsDir, 'assumptions', `${assumptionId}.json`));
+    },
+
+    async saveAssumption(assumption) {
+      await writeJson(join(decisionsDir, 'assumptions', `${assumption.id}.json`), assumption);
+    },
+
+    async listAssumptions() {
+      return listRecords<AssumptionRecord>(join(decisionsDir, 'assumptions'));
+    },
+
+    async appendAssumptionChallenge(assumptionId, challenge) {
+      const assumption = await this.getAssumption(assumptionId);
+      if (!assumption) throw new Error(`Assumption not found: ${assumptionId}`);
+      if (!assumption.challenges.some(c => c.id === challenge.id)) {
+        assumption.challenges.push(challenge);
+        await this.saveAssumption(assumption);
+      }
+    },
+
+    async saveOutcome(outcome) {
+      await writeJson(join(decisionsDir, 'outcomes', `${outcome.id}.json`), outcome);
+    },
+
+    async listOutcomes() {
+      return listRecords<OutcomeRecord>(join(decisionsDir, 'outcomes'));
     },
   };
 }

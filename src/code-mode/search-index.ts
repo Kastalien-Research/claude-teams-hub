@@ -142,6 +142,35 @@ export const CATALOG_ANNOTATIONS: Record<string, CatalogAnnotation> = {
     ],
     relatedOps: ["hub.list_workspaces", "hub.create_workspace", "hub.whoami"],
   },
+  "hub.record_decision": {
+    whenToUse:
+      "Recording a durable choice about a module or path, after consulting the scope. Capture the rationale and the alternatives you rejected — a decision without its rejected options cannot be re-evaluated later. Link assumptionIds for the beliefs it rests on so a later challenge can reach it. Never record a confidence or probability; this ledger is categorical by design.",
+    commonMistakes: [
+      "recording a second, contradicting decision for the same scope instead of superseding the first — the consult then reports both as governing",
+      "linking assumptionIds that were never recorded (record_assumption first; a dangling id is rejected)",
+      "putting the evidence in the rationale prose instead of evidenceRefs, where a reader can actually go check it",
+    ],
+    relatedOps: ["hub.consult_decisions", "hub.supersede_decision", "hub.record_assumption"],
+  },
+  "hub.consult_decisions": {
+    whenToUse:
+      "BEFORE deciding anything in a scope, and before changing code a past decision governs. Scope matching runs both ways, so a file path finds the decisions scoped to its directory and a directory finds the finer-scoped ones beneath it. Read the health flags: they are computed at read time and tell you whether a decision still stands.",
+    commonMistakes: [
+      "deciding first and consulting afterwards — the ledger only prevents rework if it is read first",
+      "reading the decision statement and ignoring the health flags, which is where 'this rests on a challenged assumption' lives",
+      "expecting superseded decisions by default — pass includeSuperseded to see the retired chain",
+    ],
+    relatedOps: ["hub.record_decision", "hub.challenge_assumption", "hub.record_outcome"],
+  },
+  "hub.challenge_assumption": {
+    whenToUse:
+      "Evidence has appeared that a recorded assumption is false — including a reversal condition firing. The challenge is additive and permanent, and it propagates: every decision linked to that assumption consults with 'rests-on-challenged-assumption' from then on. Follow it with supersede_decision on the decisions it undermines.",
+    commonMistakes: [
+      "editing or re-recording the assumption instead of challenging it — status is derived from challenges and nothing is ever rewritten",
+      "challenging the assumption and stopping there, leaving decisions that rest on it still reading as current",
+    ],
+    relatedOps: ["hub.record_assumption", "hub.supersede_decision", "hub.consult_decisions"],
+  },
   "hub.transfer_coordinator": {
     whenToUse:
       "Handing coordinatorship to another member deliberately — before going offline for good, or when the coordinating agent is being retired. Coordinator power is durable and survives disconnection, so this is not needed to recover from a dropped connection: reconnect and pass the same agentId.",

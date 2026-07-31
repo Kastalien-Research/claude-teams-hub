@@ -164,7 +164,7 @@ evaluated as a single expression and the result is called with no arguments. Sub
 Workflow: search to discover available operations, then execute code against them.
 
 \`tb\` namespaces:
-- \`tb.hub\`: workspaces, agent identity, problems, proposals, consensus, channels
+- \`tb.hub\`: workspaces, agent identity, problems, proposals, consensus, channels, decisions
 - \`tb.thought\` / \`tb.session\`: transitional thought + reasoning-session ledger
 - \`tb.vars\`: values carried across execute calls
 
