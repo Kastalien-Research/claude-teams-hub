@@ -493,6 +493,156 @@ describe('Decisions storage — filesystem persistence', () => {
   });
 });
 
+// Filesystem storage deliberately: the in-memory store hands back shared
+// object references, which masks lost-update races that the per-record JSON
+// files reproduce (PR #9 review). Each test starts BOTH operations before
+// awaiting either, so their read-modify-write sequences would interleave were
+// the manager not serializing mutations.
+describe('Decisions concurrency — mutations are serialized', () => {
+  let dataDir: string;
+
+  beforeEach(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), 'hub-decisions-'));
+  });
+
+  afterEach(async () => {
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  it('keeps every accepted challenge when two are raised concurrently', async () => {
+    const storage = createFileSystemHubStorage(dataDir);
+    const decisions = createDecisionsManager(storage);
+    const { assumptionId } = await decisions.recordAssumption(AGENT, { statement: 'a' });
+
+    const [left, right] = await Promise.all([
+      decisions.challengeAssumption(AGENT, { assumptionId, reason: 'left' }),
+      decisions.challengeAssumption('agent-other', { assumptionId, reason: 'right' }),
+    ]);
+
+    const stored = await storage.getAssumption(assumptionId);
+    expect(stored?.challenges.map(c => c.id).sort()).toEqual(
+      [left.challengeId, right.challengeId].sort(),
+    );
+  });
+
+  it('refuses the second of two concurrent supersessions of one decision', async () => {
+    const storage = createFileSystemHubStorage(dataDir);
+    const decisions = createDecisionsManager(storage);
+    const { decisionId } = await decisions.recordDecision(AGENT, {
+      scope: 'src/x/',
+      statement: 'original',
+      rationale: 'r',
+    });
+
+    const results = await Promise.allSettled([
+      decisions.supersedeDecision(AGENT, { supersedes: decisionId, statement: 'a', rationale: 'r' }),
+      decisions.supersedeDecision(AGENT, { supersedes: decisionId, statement: 'b', rationale: 'r' }),
+    ]);
+
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    const rejected = results.find(r => r.status === 'rejected');
+    expect(String((rejected as PromiseRejectedResult).reason)).toContain('already superseded');
+    const successors = (await storage.listDecisions()).filter(d => d.supersedes === decisionId);
+    expect(successors).toHaveLength(1);
+  });
+
+  it('refuses the second of two concurrent claims on one slug', async () => {
+    const storage = createFileSystemHubStorage(dataDir);
+    const decisions = createDecisionsManager(storage);
+
+    const results = await Promise.allSettled([
+      decisions.recordDecision(AGENT, {
+        scope: 'src/x/',
+        statement: 'a',
+        rationale: 'r',
+        slug: 'shared-slug',
+      }),
+      decisions.recordDecision(AGENT, {
+        scope: 'src/y/',
+        statement: 'b',
+        rationale: 'r',
+        slug: 'shared-slug',
+      }),
+    ]);
+
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    const rejected = results.find(r => r.status === 'rejected');
+    expect(String((rejected as PromiseRejectedResult).reason)).toContain('already used');
+    const holders = (await storage.listDecisions()).filter(d => d.slug === 'shared-slug');
+    expect(holders).toHaveLength(1);
+  });
+
+  it('runs the next mutation after a failed one rather than wedging the chain', async () => {
+    const storage = createFileSystemHubStorage(dataDir);
+    const decisions = createDecisionsManager(storage);
+
+    await expect(
+      decisions.challengeAssumption(AGENT, { assumptionId: 'missing', reason: 'r' }),
+    ).rejects.toThrow('Assumption not found');
+    const { decisionId } = await decisions.recordDecision(AGENT, {
+      scope: 'src/x/',
+      statement: 'still writable',
+      rationale: 'r',
+    });
+    expect((await storage.getDecision(decisionId))?.statement).toBe('still writable');
+  });
+});
+
+// Shape violations must be refused with a deliberate message BEFORE anything
+// touches storage: the ledger is append-only by design, so a malformed row
+// that persists is permanent. An object-valued `assumptionIds` used to
+// surface as the implementation exception "assumptionIds is not iterable",
+// and a malformed `evidenceRefs` was written to disk verbatim (PR #9 review).
+describe('Decision draft structural validation', () => {
+  let storage: ReturnType<typeof createInMemoryHubStorage>;
+  let decisions: ReturnType<typeof createDecisionsManager>;
+
+  beforeEach(() => {
+    storage = createInMemoryHubStorage();
+    decisions = createDecisionsManager(storage);
+  });
+
+  const draft = (overrides: Record<string, unknown>) =>
+    ({ scope: 'src/x/', statement: 's', rationale: 'r', ...overrides }) as Parameters<
+      typeof decisions.recordDecision
+    >[1];
+
+  it.each([
+    ['object-valued assumptionIds', { assumptionIds: { first: 'a' } }, 'assumptionIds must be an array of strings'],
+    ['assumptionIds with non-string entries', { assumptionIds: [1, 2] }, 'assumptionIds must be an array of strings'],
+    ['object-valued evidenceRefs', { evidenceRefs: { ref: 'x' } }, 'evidenceRefs must be an array of strings'],
+    ['alternatives without string labels', { alternatives: [{ label: 7 }] }, 'alternatives must be an array'],
+    ['a thoughtRef missing its thoughtNumber', { thoughtRef: { sessionId: 's' } }, 'thoughtRef must be'],
+    ['a non-string slug', { slug: 42 }, 'slug must be a string'],
+  ])('refuses a decision draft with %s and persists nothing', async (_label, overrides, message) => {
+    await expect(decisions.recordDecision(AGENT, draft(overrides))).rejects.toThrow(message);
+    expect(await storage.listDecisions()).toEqual([]);
+  });
+
+  it('applies the same shape checks to supersede_decision', async () => {
+    const { decisionId } = await decisions.recordDecision(AGENT, draft({}));
+    await expect(
+      decisions.supersedeDecision(AGENT, {
+        ...draft({ evidenceRefs: { ref: 'x' } }),
+        supersedes: decisionId,
+      }),
+    ).rejects.toThrow('evidenceRefs must be an array of strings');
+    expect((await storage.listDecisions()).filter(d => d.supersedes === decisionId)).toEqual([]);
+  });
+
+  it('refuses a challenge whose evidenceRefs is not a string array', async () => {
+    const { assumptionId } = await decisions.recordAssumption(AGENT, { statement: 'a' });
+    await expect(
+      decisions.challengeAssumption(AGENT, {
+        assumptionId,
+        reason: 'r',
+        evidenceRefs: { ref: 'x' } as unknown as string[],
+      }),
+    ).rejects.toThrow('evidenceRefs must be an array of strings');
+    expect((await storage.getAssumption(assumptionId))?.challenges).toEqual([]);
+  });
+});
+
 describe('Decisions through the hub handler', () => {
   let storage: ReturnType<typeof createInMemoryHubStorage>;
   let handler: ReturnType<typeof createHubHandler>;

@@ -88,7 +88,97 @@ export interface DecisionsManager {
   ): Promise<{ scope: string; decisions: ConsultedDecision[] }>;
 }
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+function assertOptionalStringArray(value: unknown, field: string): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.some(entry => typeof entry !== 'string')) {
+    throw new Error(`${field} must be an array of strings.`);
+  }
+}
+
+function assertOptionalString(value: unknown, field: string): void {
+  if (value !== undefined && typeof value !== 'string') {
+    throw new Error(`${field} must be a string.`);
+  }
+}
+
+/**
+ * Structural validation of a decision draft, before anything touches storage.
+ *
+ * The handler checks argument PRESENCE; this checks argument SHAPE, and it
+ * lives in the manager so every caller crosses it. Without it an object-valued
+ * `assumptionIds` surfaced as the implementation exception "assumptionIds is
+ * not iterable", and a malformed `evidenceRefs` was persisted verbatim — into
+ * a ledger that is append-only by design, so a bad row is permanent
+ * (PR #9 review). Runs on `record_decision` and `supersede_decision` alike via
+ * `buildDecision`.
+ */
+function validateDraftShapes(draft: DecisionDraft): void {
+  if (typeof draft.statement !== 'string') throw new Error('statement must be a string.');
+  if (typeof draft.rationale !== 'string') throw new Error('rationale must be a string.');
+  assertOptionalString(draft.scope, 'scope');
+  assertOptionalString(draft.slug, 'slug');
+  assertOptionalString(draft.expectedOutcome, 'expectedOutcome');
+  assertOptionalString(draft.regimeRef, 'regimeRef');
+  assertOptionalString(draft.workspaceId, 'workspaceId');
+  assertOptionalString(draft.taskRef, 'taskRef');
+  assertOptionalStringArray(draft.assumptionIds, 'assumptionIds');
+  assertOptionalStringArray(draft.evidenceRefs, 'evidenceRefs');
+  if (draft.alternatives !== undefined) {
+    const ok =
+      Array.isArray(draft.alternatives) &&
+      draft.alternatives.every(
+        alt =>
+          isPlainObject(alt) &&
+          typeof alt.label === 'string' &&
+          (alt.reason === undefined || typeof alt.reason === 'string'),
+      );
+    if (!ok) {
+      throw new Error('alternatives must be an array of { label, reason? } objects with string fields.');
+    }
+  }
+  if (draft.thoughtRef !== undefined) {
+    const ref = draft.thoughtRef;
+    const ok =
+      isPlainObject(ref) &&
+      typeof ref.thoughtNumber === 'number' &&
+      (ref.sessionId === undefined || typeof ref.sessionId === 'string') &&
+      (ref.branchId === undefined || typeof ref.branchId === 'string');
+    if (!ok) {
+      throw new Error(
+        'thoughtRef must be { thoughtNumber: number, sessionId?: string, branchId?: string }.',
+      );
+    }
+  }
+}
+
 export function createDecisionsManager(storage: HubStorage): DecisionsManager {
+  /**
+   * Every mutation runs to completion before the next one starts.
+   *
+   * The ledger's invariants — slug uniqueness, one successor per decision,
+   * all accepted challenges surviving — are enforced by read-then-write
+   * sequences over filesystem storage that has no transactions, so two
+   * interleaved writers can both pass the same check and both persist
+   * (PR #9 review: a challenge append was lost, and two supersessions of one
+   * decision both fulfilled). The hub is a single Node process, so a
+   * manager-level chain is sufficient — and it is deliberately TOTAL over
+   * mutations rather than keyed per record, because slug and successor checks
+   * span records, and "which writes serialize" should never require reasoning
+   * about which invariant each op touches. Reads stay concurrent.
+   */
+  let lastWrite: Promise<unknown> = Promise.resolve();
+  function serialized<T>(op: () => Promise<T>): Promise<T> {
+    const run = lastWrite.then(op, op);
+    lastWrite = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
   /**
    * Every assumption a decision claims to rest on must exist when it is
    * recorded. A decision pointing at a missing assumption would consult
@@ -126,6 +216,7 @@ export function createDecisionsManager(storage: HubStorage): DecisionsManager {
     draft: DecisionDraft & { scope: string },
     supersedes?: string,
   ): Promise<DecisionRecord> {
+    validateDraftShapes(draft);
     const assumptionIds = draft.assumptionIds ?? [];
     await assertAssumptionsExist(assumptionIds);
     if (draft.slug !== undefined) await assertSlugAvailable(draft.slug);
@@ -152,88 +243,105 @@ export function createDecisionsManager(storage: HubStorage): DecisionsManager {
   }
 
   return {
-    async recordDecision(agentId, args) {
-      const decision = await buildDecision(agentId, args);
-      await storage.saveDecision(decision);
-      return { decisionId: decision.id, decision };
+    recordDecision(agentId, args) {
+      return serialized(async () => {
+        const decision = await buildDecision(agentId, args);
+        await storage.saveDecision(decision);
+        return { decisionId: decision.id, decision };
+      });
     },
 
-    async recordAssumption(agentId, { statement, scope }) {
-      const assumption: AssumptionRecord = {
-        v: 1,
-        id: randomUUID(),
-        statement,
-        ...(scope !== undefined ? { scope } : {}),
-        proposedBy: agentId,
-        proposedAt: new Date().toISOString(),
-        challenges: [],
-      };
-      await storage.saveAssumption(assumption);
-      return { assumptionId: assumption.id, assumption };
+    recordAssumption(agentId, { statement, scope }) {
+      return serialized(async () => {
+        if (typeof statement !== 'string') throw new Error('statement must be a string.');
+        assertOptionalString(scope, 'scope');
+        const assumption: AssumptionRecord = {
+          v: 1,
+          id: randomUUID(),
+          statement,
+          ...(scope !== undefined ? { scope } : {}),
+          proposedBy: agentId,
+          proposedAt: new Date().toISOString(),
+          challenges: [],
+        };
+        await storage.saveAssumption(assumption);
+        return { assumptionId: assumption.id, assumption };
+      });
     },
 
-    async challengeAssumption(agentId, { assumptionId, reason, evidenceRefs }) {
-      const existing = await storage.getAssumption(assumptionId);
-      if (!existing) throw new Error(`Assumption not found: ${assumptionId}`);
+    challengeAssumption(agentId, { assumptionId, reason, evidenceRefs }) {
+      return serialized(async () => {
+        if (typeof reason !== 'string') throw new Error('reason must be a string.');
+        assertOptionalStringArray(evidenceRefs, 'evidenceRefs');
+        const existing = await storage.getAssumption(assumptionId);
+        if (!existing) throw new Error(`Assumption not found: ${assumptionId}`);
 
-      const challenge = {
-        id: randomUUID(),
-        challengedBy: agentId,
-        challengedAt: new Date().toISOString(),
-        reason,
-        evidenceRefs: evidenceRefs ?? [],
-      };
-      // Additive append, the same contract as appendReview/appendEndorsement:
-      // a challenge is never withdrawn, and concurrent challenges all survive.
-      await storage.appendAssumptionChallenge(assumptionId, challenge);
+        const challenge = {
+          id: randomUUID(),
+          challengedBy: agentId,
+          challengedAt: new Date().toISOString(),
+          reason,
+          evidenceRefs: evidenceRefs ?? [],
+        };
+        // Additive append, the same contract as appendReview/appendEndorsement:
+        // a challenge is never withdrawn, and concurrent challenges all survive
+        // — which the serialized chain is what actually guarantees: the
+        // storage-level append is a read-modify-write, and unserialized it
+        // lost whichever of two interleaved appends wrote first.
+        await storage.appendAssumptionChallenge(assumptionId, challenge);
 
-      const updated = await storage.getAssumption(assumptionId);
-      return { challengeId: challenge.id, assumption: updated ?? existing };
+        const updated = await storage.getAssumption(assumptionId);
+        return { challengeId: challenge.id, assumption: updated ?? existing };
+      });
     },
 
-    async supersedeDecision(agentId, args) {
-      const target = await storage.getDecision(args.supersedes);
-      if (!target) throw new Error(`Decision not found: ${args.supersedes}`);
+    supersedeDecision(agentId, args) {
+      return serialized(async () => {
+        const target = await storage.getDecision(args.supersedes);
+        if (!target) throw new Error(`Decision not found: ${args.supersedes}`);
 
-      // Two successors would make "the current decision" ambiguous — the
-      // consult would report the scope as governed by both. The refusal names
-      // the winner so the caller can chain onto it instead of guessing.
-      const allDecisions = await storage.listDecisions();
-      const winner = successorOf(args.supersedes, allDecisions);
-      if (winner) {
-        throw new Error(
-          `Decision ${args.supersedes} is already superseded by ${winner.id}` +
-            `${winner.slug ? ` (${winner.slug})` : ''}. ` +
-            'Supersede that decision instead — supersession is a chain, not a fork.',
+        // Two successors would make "the current decision" ambiguous — the
+        // consult would report the scope as governed by both. The refusal names
+        // the winner so the caller can chain onto it instead of guessing.
+        const allDecisions = await storage.listDecisions();
+        const winner = successorOf(args.supersedes, allDecisions);
+        if (winner) {
+          throw new Error(
+            `Decision ${args.supersedes} is already superseded by ${winner.id}` +
+              `${winner.slug ? ` (${winner.slug})` : ''}. ` +
+              'Supersede that decision instead — supersession is a chain, not a fork.',
+          );
+        }
+
+        const decision = await buildDecision(
+          agentId,
+          { ...args, scope: args.scope ?? target.scope },
+          args.supersedes,
         );
-      }
-
-      const decision = await buildDecision(
-        agentId,
-        { ...args, scope: args.scope ?? target.scope },
-        args.supersedes,
-      );
-      await storage.saveDecision(decision);
-      return { decisionId: decision.id, decision, supersededId: args.supersedes };
+        await storage.saveDecision(decision);
+        return { decisionId: decision.id, decision, supersededId: args.supersedes };
+      });
     },
 
-    async recordOutcome(agentId, { decisionId, kind, data, expectationAssessment, note }) {
-      const decision = await storage.getDecision(decisionId);
-      if (!decision) throw new Error(`Decision not found: ${decisionId}`);
+    recordOutcome(agentId, { decisionId, kind, data, expectationAssessment, note }) {
+      return serialized(async () => {
+        const decision = await storage.getDecision(decisionId);
+        if (!decision) throw new Error(`Decision not found: ${decisionId}`);
 
-      const outcome: OutcomeRecord = {
-        v: 1,
-        id: randomUUID(),
-        decisionId,
-        kind,
-        data,
-        ...(expectationAssessment !== undefined ? { expectationAssessment } : {}),
-        ...(note !== undefined ? { note } : {}),
-        observedBy: agentId,
-        observedAt: new Date().toISOString(),
-      };
-      await storage.saveOutcome(outcome);
-      return { outcomeId: outcome.id, outcome };
+        const outcome: OutcomeRecord = {
+          v: 1,
+          id: randomUUID(),
+          decisionId,
+          kind,
+          data,
+          ...(expectationAssessment !== undefined ? { expectationAssessment } : {}),
+          ...(note !== undefined ? { note } : {}),
+          observedBy: agentId,
+          observedAt: new Date().toISOString(),
+        };
+        await storage.saveOutcome(outcome);
+        return { outcomeId: outcome.id, outcome };
+      });
     },
 
     async consultDecisions({ scope, currentRegimes, includeSuperseded }) {
