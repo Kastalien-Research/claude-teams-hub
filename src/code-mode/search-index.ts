@@ -250,11 +250,11 @@ export function buildSearchCatalog(): SearchCatalog {
     publicTools: [
       {
         name: "thoughtbox_search",
-        description: "Discover Thoughtbox operations, prompts, resources, and public tool surfaces by querying this catalog with JavaScript.",
+        description: "Discover Thoughtbox operations, prompts, resources, and public tool surfaces by querying this catalog. Submit code that evaluates to a function, e.g. async () => Object.keys(catalog.operations).",
       },
       {
         name: "thoughtbox_execute",
-        description: "Run JavaScript against the tb SDK for Thoughtbox operation modules.",
+        description: "Run operations against the tb SDK. Submit code that evaluates to a function, e.g. async () => { const s = await tb.session.list(); return s; }.",
       },
     ],
 

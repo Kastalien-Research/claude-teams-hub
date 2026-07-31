@@ -2,7 +2,12 @@ import { describe, it, expect, afterAll } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ExecuteTool, type ExecuteToolDeps } from "../execute-tool.js";
+import {
+  ExecuteTool,
+  EXECUTE_TOOL,
+  executeToolInputSchema,
+  type ExecuteToolDeps,
+} from "../execute-tool.js";
 import { ThoughtTool } from "../../thought/tool.js";
 import { SessionTool } from "../../sessions/tool.js";
 import { ThoughtHandler } from "../../thought-handler.js";
@@ -647,5 +652,48 @@ describe("thoughtbox_execute tb.hub", () => {
         mergeMessage: "should not persist",
       }),
     ).rejects.toThrow(/not found/);
+  });
+});
+
+// Same contract as thoughtbox_search: the submitted string is evaluated and
+// the result is called. "write JavaScript" reads as "top-level statements are
+// fine", and they are not.
+describe("thoughtbox_execute — submission contract", () => {
+  it("names the function requirement and shows a working example", () => {
+    expect(EXECUTE_TOOL.description).toMatch(/must evaluate to a function/i);
+    expect(EXECUTE_TOOL.description).toContain("async () =>");
+    expect(executeToolInputSchema.shape.code.description).toMatch(
+      /must evaluate to a function/i,
+    );
+  });
+
+  it("explains the contract when the code evaluates to a non-function", async () => {
+    const tool = createExecuteTool();
+    const result = await tool.handle({ code: `({ sessionId: "x" })` });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.result).toBeNull();
+    expect(output.error).toMatch(/must evaluate to a function/i);
+    expect(output.error).toContain("async () =>");
+    expect(output.error).not.toMatch(/intermediate value/);
+  });
+
+  it("explains the contract when bare top-level statements are submitted", async () => {
+    const tool = createExecuteTool();
+    const result = await tool.handle({
+      code: `const s = await tb.session.list(); return s;`,
+    });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.result).toBeNull();
+    expect(output.error).toMatch(/must evaluate to a function/i);
+    expect(output.error).toContain("async () =>");
+  });
+
+  it("leaves errors thrown inside a valid function untouched", async () => {
+    const tool = createExecuteTool();
+    const result = await tool.handle({
+      code: `async () => { throw new Error("boom"); }`,
+    });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.error).toBe("boom");
   });
 });

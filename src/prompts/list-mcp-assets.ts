@@ -53,13 +53,19 @@ telemetry.
 ### 1. \`thoughtbox_search\` — Catalog Search
 
 Discover operation modules, prompts, resources, and public tool surfaces by
-querying the server catalog with JavaScript.
+querying the server catalog. \`catalog\` is in scope:
+\`async () => Object.keys(catalog.operations)\`
 
 ### 2. \`thoughtbox_execute\` — Code Mode Operation Runner
 
-Run JavaScript against the \`tb\` SDK. One call can chain many operations;
+Run operations against the \`tb\` SDK. One call can chain many operations;
 only what you return or log comes back, so multi-step coordination costs a
-single round-trip.
+single round-trip:
+\`async () => { const s = await tb.session.list(); return s; }\`
+
+Both tools take a \`code\` string that **must evaluate to a function** — the
+string is evaluated as a single expression and the result is called with no
+arguments, so bare top-level statements fail to parse.
 
 **\`tb\` namespaces:**
 

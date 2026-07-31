@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { SearchTool } from "../search-tool.js";
+import { SearchTool, SEARCH_TOOL, searchToolInputSchema } from "../search-tool.js";
 import { buildSearchCatalog } from "../search-index.js";
 
 const catalog = buildSearchCatalog();
@@ -117,5 +117,52 @@ describe("thoughtbox_search", () => {
     // Object.freeze in sloppy mode: assignment silently fails, property not added
     // undefined serializes to null in JSON
     expect(output.result).toBeNull();
+  });
+});
+
+// The executor evaluates the submitted string and CALLS the result, so a
+// submission of bare top-level statements fails with a parse or type error
+// that says nothing about the actual contract. Both the description and the
+// error have to name the requirement.
+describe("thoughtbox_search — submission contract", () => {
+  it("names the function requirement and shows a working example", () => {
+    expect(SEARCH_TOOL.description).toMatch(/must evaluate to a function/i);
+    expect(SEARCH_TOOL.description).toContain("async () =>");
+    expect(searchToolInputSchema.shape.code.description).toMatch(
+      /must evaluate to a function/i,
+    );
+  });
+
+  it("explains the contract when the code evaluates to a non-function", async () => {
+    const result = await tool.handle({ code: `catalog.operations` });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.result).toBeNull();
+    expect(output.error).toMatch(/must evaluate to a function/i);
+    expect(output.error).toContain("async () =>");
+    // The old error blamed the catalog, which sent readers the wrong way.
+    expect(output.error).not.toMatch(/catalog\.operations is not a function/);
+  });
+
+  it("explains the contract when bare top-level statements are submitted", async () => {
+    const result = await tool.handle({ code: `const ops = catalog.operations; return ops;` });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.result).toBeNull();
+    expect(output.error).toMatch(/must evaluate to a function/i);
+    expect(output.error).toContain("async () =>");
+  });
+
+  it("still reports a genuine syntax error inside a well-formed function", async () => {
+    const result = await tool.handle({ code: `async () => { const x = ; return x; }` });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.result).toBeNull();
+    expect(output.error).toMatch(/unexpected token/i);
+  });
+
+  it("leaves errors thrown inside a valid function untouched", async () => {
+    const result = await tool.handle({
+      code: `async () => { throw new Error("search failed"); }`,
+    });
+    const output = JSON.parse(result.content[0].text);
+    expect(output.error).toBe("search failed");
   });
 });
