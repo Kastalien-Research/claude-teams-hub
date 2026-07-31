@@ -17,6 +17,8 @@ import { createProblemsManager } from './problems.js';
 import { createProposalsManager } from './proposals.js';
 import { createConsensusManager } from './consensus.js';
 import { createChannelsManager } from './channels.js';
+import { createDecisionsManager } from './decisions.js';
+import { EXPECTATION_ASSESSMENTS, isExpectationAssessment } from './decision-types.js';
 import { getProfilePromptContent, isValidProfile } from './profiles-registry.js';
 import { AGENT_ID_GUIDANCE, AGENT_ID_REQUIRED_ERROR } from './identity-resolver.js';
 import type { ThoughtStoreForWorkspace } from './workspace.js';
@@ -37,7 +39,7 @@ type ThoughtStore = ThoughtStoreForWorkspace & {
  * (agent_registered); the event stream delivers those to every client.
  */
 export interface HubEvent {
-  type: 'problem_created' | 'problem_status_changed' | 'message_posted' | 'proposal_created' | 'proposal_merged' | 'consensus_marked' | 'workspace_created' | 'agent_registered' | 'workspace_joined' | 'problem_claimed' | 'proposal_reviewed';
+  type: 'problem_created' | 'problem_status_changed' | 'message_posted' | 'proposal_created' | 'proposal_merged' | 'consensus_marked' | 'workspace_created' | 'agent_registered' | 'workspace_joined' | 'problem_claimed' | 'proposal_reviewed' | 'decision_recorded' | 'decision_superseded' | 'assumption_recorded' | 'assumption_challenged' | 'outcome_recorded';
   workspaceId: string;
   data: Record<string, unknown>;
 }
@@ -90,6 +92,7 @@ export function createHubHandler(
   const proposals = createProposalsManager(storage, thoughtStore);
   const consensus = createConsensusManager(storage);
   const channels = createChannelsManager(storage);
+  const decisions = createDecisionsManager(storage);
 
   function emit(event: HubEvent): void {
     if (onEvent) onEvent(event);
@@ -274,6 +277,95 @@ export function createHubHandler(
             throw new Error(`Unknown profile '${profileName}'. Available profiles: MANAGER, ARCHITECT, DEBUGGER, SECURITY, RESEARCHER, REVIEWER`);
           }
           return content;
+        }
+
+        // Decision ledger. Stage 1 because the store is hub-global: there is
+        // no workspaceId to check membership against, and the optional
+        // workspaceId these records carry is context, not an access scope.
+        // Referential checks (assumption ids, decision ids, slug uniqueness,
+        // double supersession) live in the manager, which can see storage;
+        // what belongs here is argument presence and the enum guard.
+        if (operation === 'record_decision') {
+          if (!args?.scope) throw new Error('record_decision requires scope (the module or path the decision governs)');
+          if (!args.statement) throw new Error('record_decision requires statement');
+          if (!args.rationale) throw new Error('record_decision requires rationale');
+          const recorded = await decisions.recordDecision(agentId, args as any);
+          emit({ type: 'decision_recorded', workspaceId: recorded.decision.workspaceId ?? '*', data: {
+            decisionId: recorded.decisionId,
+            scope: recorded.decision.scope,
+            statement: recorded.decision.statement,
+            decidedBy: agentId,
+            ...(recorded.decision.slug ? { slug: recorded.decision.slug } : {}),
+          } });
+          return recorded;
+        }
+        if (operation === 'record_assumption') {
+          if (!args?.statement) throw new Error('record_assumption requires statement');
+          const recorded = await decisions.recordAssumption(agentId, args as any);
+          emit({ type: 'assumption_recorded', workspaceId: '*', data: {
+            assumptionId: recorded.assumptionId,
+            statement: recorded.assumption.statement,
+            proposedBy: agentId,
+            ...(recorded.assumption.scope ? { scope: recorded.assumption.scope } : {}),
+          } });
+          return recorded;
+        }
+        if (operation === 'challenge_assumption') {
+          if (!args?.assumptionId) throw new Error('challenge_assumption requires assumptionId');
+          if (!args.reason) throw new Error('challenge_assumption requires reason');
+          const challenged = await decisions.challengeAssumption(agentId, args as any);
+          emit({ type: 'assumption_challenged', workspaceId: '*', data: {
+            assumptionId: args.assumptionId,
+            challengeId: challenged.challengeId,
+            reason: args.reason,
+            challengedBy: agentId,
+          } });
+          return challenged;
+        }
+        if (operation === 'supersede_decision') {
+          if (!args?.supersedes) throw new Error('supersede_decision requires supersedes (the id of the decision being retired)');
+          if (!args.statement) throw new Error('supersede_decision requires statement');
+          if (!args.rationale) throw new Error('supersede_decision requires rationale');
+          const superseded = await decisions.supersedeDecision(agentId, args as any);
+          emit({ type: 'decision_superseded', workspaceId: superseded.decision.workspaceId ?? '*', data: {
+            decisionId: superseded.decisionId,
+            supersededId: superseded.supersededId,
+            scope: superseded.decision.scope,
+            statement: superseded.decision.statement,
+            decidedBy: agentId,
+          } });
+          return superseded;
+        }
+        if (operation === 'record_outcome') {
+          if (!args?.decisionId) throw new Error('record_outcome requires decisionId');
+          if (!args.kind) throw new Error('record_outcome requires kind');
+          if (!args.data || typeof args.data !== 'object') {
+            throw new Error('record_outcome requires data — an object of raw observed facts, not a verdict');
+          }
+          // Same laundering hazard as review_proposal: `args` is untyped and
+          // the cast below hides an out-of-union value, which would then read
+          // as "not a contradiction" and silently never raise the health flag.
+          if (args.expectationAssessment !== undefined && !isExpectationAssessment(args.expectationAssessment)) {
+            throw new Error(
+              `Invalid expectationAssessment '${String(args.expectationAssessment)}'. ` +
+                `Valid assessments: ${EXPECTATION_ASSESSMENTS.join(', ')}`,
+            );
+          }
+          const observed = await decisions.recordOutcome(agentId, args as any);
+          emit({ type: 'outcome_recorded', workspaceId: '*', data: {
+            outcomeId: observed.outcomeId,
+            decisionId: observed.outcome.decisionId,
+            kind: observed.outcome.kind,
+            observedBy: agentId,
+            ...(observed.outcome.expectationAssessment
+              ? { expectationAssessment: observed.outcome.expectationAssessment }
+              : {}),
+          } });
+          return observed;
+        }
+        if (operation === 'consult_decisions') {
+          if (!args?.scope) throw new Error('consult_decisions requires scope (the module or path to consult)');
+          return decisions.consultDecisions(args as any);
         }
       }
 

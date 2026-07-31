@@ -16,7 +16,12 @@ export type HubEventType =
   | 'agent_registered'
   | 'workspace_joined'
   | 'problem_claimed'
-  | 'proposal_reviewed';
+  | 'proposal_reviewed'
+  | 'decision_recorded'
+  | 'decision_superseded'
+  | 'assumption_recorded'
+  | 'assumption_challenged'
+  | 'outcome_recorded';
 
 /**
  * Events bridged from the in-process ThoughtEmitter. One type covers all three

@@ -13,6 +13,11 @@ import type {
   Channel,
 } from '../hub-types.js';
 import { statusAfterReview } from '../hub-types.js';
+import type {
+  AssumptionRecord,
+  DecisionRecord,
+  OutcomeRecord,
+} from '../decision-types.js';
 import type { ThoughtData } from '../../persistence/types.js';
 
 /**
@@ -26,6 +31,20 @@ export function createInMemoryHubStorage(): HubStorage {
   const proposals: Map<string, Map<string, Proposal>> = new Map();
   const consensusMarkers: Map<string, Map<string, ConsensusMarker>> = new Map();
   const channels: Map<string, Map<string, Channel>> = new Map();
+
+  // Decision-ledger collections hold SERIALIZED records, unlike the reference-
+  // holding maps above. hub-storage-fs round-trips every decision record
+  // through JSON, so a caller there can never mutate stored state by holding a
+  // returned object; a shared-reference fake would let exactly that pass in
+  // tests and throw in production — and it would quietly defeat the
+  // append-only property test, whose whole subject is whether stored bytes
+  // changed.
+  const decisions: Map<string, string> = new Map();
+  const assumptions: Map<string, string> = new Map();
+  const outcomes: Map<string, string> = new Map();
+
+  const parse = <T>(json: string | undefined): T | null =>
+    json === undefined ? null : (JSON.parse(json) as T);
 
   return {
     // Agent operations
@@ -120,6 +139,40 @@ export function createInMemoryHubStorage(): HubStorage {
       if (!channel) throw new Error(`Channel not found for problem: ${problemId}`);
       channel.messages.push(message);
       return channel.messages.length;
+    },
+
+    // Decision ledger operations (hub-global — no workspace key)
+    async getDecision(decisionId) {
+      return parse<DecisionRecord>(decisions.get(decisionId));
+    },
+    async saveDecision(decision) {
+      decisions.set(decision.id, JSON.stringify(decision));
+    },
+    async listDecisions() {
+      return [...decisions.values()].map(json => JSON.parse(json) as DecisionRecord);
+    },
+    async getAssumption(assumptionId) {
+      return parse<AssumptionRecord>(assumptions.get(assumptionId));
+    },
+    async saveAssumption(assumption) {
+      assumptions.set(assumption.id, JSON.stringify(assumption));
+    },
+    async listAssumptions() {
+      return [...assumptions.values()].map(json => JSON.parse(json) as AssumptionRecord);
+    },
+    async appendAssumptionChallenge(assumptionId, challenge) {
+      const assumption = parse<AssumptionRecord>(assumptions.get(assumptionId));
+      if (!assumption) throw new Error(`Assumption not found: ${assumptionId}`);
+      if (!assumption.challenges.some(c => c.id === challenge.id)) {
+        assumption.challenges.push(challenge);
+        assumptions.set(assumptionId, JSON.stringify(assumption));
+      }
+    },
+    async saveOutcome(outcome) {
+      outcomes.set(outcome.id, JSON.stringify(outcome));
+    },
+    async listOutcomes() {
+      return [...outcomes.values()].map(json => JSON.parse(json) as OutcomeRecord);
     },
   };
 }

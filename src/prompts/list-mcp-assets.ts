@@ -71,7 +71,7 @@ arguments, so bare top-level statements fail to parse.
 
 | Namespace | Purpose |
 |-----------|---------|
-| \`tb.hub\` | Workspaces, problems, proposals, consensus, channels, agent identity and attribution |
+| \`tb.hub\` | Workspaces, problems, proposals, consensus, channels, decisions, agent identity and attribution |
 | \`tb.thought\` | Append, revise, and branch reasoning steps in the thought ledger |
 | \`tb.session\` | Create, query, complete, and export reasoning sessions |
 | \`tb.vars\` | Durable named variables within one MCP session (in-memory; lost when the session ends) |
