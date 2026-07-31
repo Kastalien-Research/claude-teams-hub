@@ -1,7 +1,7 @@
 /**
  * Operations Catalog for Hub Toolhost
  *
- * Defines all 28 hub operations organized by category with stage metadata.
+ * Defines all 29 hub operations organized by category with stage metadata.
  * Includes hub vocabulary for agent onboarding.
  */
 
@@ -25,7 +25,7 @@ export const HUB_VOCABULARY = {
   proposal: "A proposed solution to a problem. Includes a source branch reference for code changes. Other agents review and approve proposals before they can be merged.",
   consensus: "A decision marker that records agreement among agents. Tied to a thought reference for traceability. Other agents endorse consensus markers to show agreement.",
   channel: "A message stream scoped to a problem within a workspace. Used for discussion, status updates, and coordination between agents working on related problems.",
-  agent: "A registered participant in the hub. Has a unique ID, name, and optional profile. Must register before joining workspaces.",
+  agent: "A registered participant in the hub. Has a unique agentId, name, and optional profile. The agentId is a durable handle stored in the hub, not a connection-scoped session: pass it on every call to act as that agent, from any connection or client, for as long as the record exists.",
   profile: "An optional role specialization (MANAGER, ARCHITECT, DEBUGGER, SECURITY, RESEARCHER, REVIEWER) that provides domain-specific mental models and behavioral priming.",
 };
 
@@ -37,7 +37,7 @@ const IDENTITY_OPERATIONS: OperationDefinition[] = [
   {
     name: "register",
     title: "Register Agent",
-    description: "Register as an agent in the hub. Required before any other hub operation. Returns a unique agentId.",
+    description: "Mint a durable agent identity. Returns a unique agentId — RECORD IT AND REUSE IT: pass it as agentId on every later hub call, including from a new connection, session, or client. Identity lives in hub storage, not in the connection, so re-registering is never how you recover an existing agent (it mints a second one). Every call registers a NEW agent.",
     category: "identity",
     stage: 0,
     inputSchema: {
@@ -67,7 +67,7 @@ const IDENTITY_OPERATIONS: OperationDefinition[] = [
   {
     name: "quick_join",
     title: "Quick Join",
-    description: "Register and join a workspace in a single call. Combines register + join_workspace for efficient onboarding.",
+    description: "Register and join a workspace in a single call. Combines register + join_workspace for efficient onboarding. Returns an agentId to record and reuse. Pass your existing agentId to re-join or join a second workspace as yourself; omit it and a new agent is minted.",
     category: "identity",
     stage: 0,
     inputSchema: {
@@ -117,7 +117,7 @@ const AGENT_OPERATIONS: OperationDefinition[] = [
   {
     name: "whoami",
     title: "Who Am I",
-    description: "Get current agent identity, role, and workspace memberships.",
+    description: "Get an agent's identity, role, and workspace memberships. Reports the agent named by the call's agentId (or the THOUGHTBOX_AGENT_ID/THOUGHTBOX_AGENT_NAME identity when none is passed) — there is no per-connection 'current agent'.",
     category: "agent",
     stage: 1,
     inputSchema: {
@@ -169,6 +169,25 @@ const AGENT_OPERATIONS: OperationDefinition[] = [
     },
     example: {
       workspaceId: "ws-abc123",
+    },
+  },
+  {
+    name: "transfer_coordinator",
+    title: "Transfer Coordinator",
+    description: "Hand coordinatorship of a workspace to another agent that has joined it. Only the current coordinator may transfer. The previous coordinator becomes a contributor and loses merge_proposal; the new coordinator gains it. Coordinator power is durable — it survives disconnection, so transfer is for handing over deliberately, not for recovering a live coordinator.",
+    category: "agent",
+    stage: 1,
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace whose coordinator changes" },
+        toAgentId: { type: "string", description: "agentId of the member receiving coordinatorship" },
+      },
+      required: ["workspaceId", "toAgentId"],
+    },
+    example: {
+      workspaceId: "ws-abc123",
+      toAgentId: "b3f1c2d4-5678-4abc-9def-0123456789ab",
     },
   },
   {

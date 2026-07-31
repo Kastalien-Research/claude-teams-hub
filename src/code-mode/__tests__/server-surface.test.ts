@@ -93,7 +93,7 @@ describe("createMcpServer tool surface", () => {
       // hub operation, since its own keys are snake_case and tb.hub is not.
       const hub = catalog.operations["hub"]!;
       const hubNames = Object.keys(hub);
-      expect(hubNames).toHaveLength(28);
+      expect(hubNames).toHaveLength(29);
       expect(hubNames.filter((name) => !hub[name]!.sdkMethod)).toEqual([]);
       expect(hub["review_proposal"]?.sdkMethod).toBe("tb.hub.reviewProposal");
 

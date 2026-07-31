@@ -3,6 +3,18 @@
 Found during the phase-6 two-agent live smoke (2026-07-29), each verified
 against source and live server state, not just observed. Ordered by bite.
 
+> **Superseded by SPEC-HUB-003 (durable agent identity).** Issues #1 and #5
+> below are written against a model that no longer exists: identity bound to
+> the MCP session, a "session default" agentId taken from the first
+> registration, and an explicit `agentId` accepted only if it was registered
+> on the same connection. Identity is now resolved per request from the
+> durable agent record — `SessionIdentityRegistry` is deleted, agentId-less
+> mutations resolve only from `THOUGHTBOX_AGENT_ID`/`THOUGHTBOX_AGENT_NAME`,
+> and coordinator power survives reconnection (see README "Identity"). The
+> old workaround "register/quickJoin at most once per MCP session" is
+> obsolete: pass your `agentId` on every call instead, from any connection.
+> The reports are kept verbatim for the record.
+
 ## 1. ~~`quickJoin` in an already-identified MCP session mints an orphan agent~~ FIXED
 
 **Fixed 2026-07-29** (same day it was found): the tool handler now passes the

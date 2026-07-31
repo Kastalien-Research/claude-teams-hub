@@ -53,7 +53,7 @@ export const STATIC_RESOURCES: StaticResourceDef[] = [
     key: "hub-operations",
     name: "Hub Operations Catalog",
     uri: "thoughtbox://hub/operations",
-    description: "Complete catalog of all 28 hub operations organized by category with stage metadata and vocabulary",
+    description: "Complete catalog of all 29 hub operations organized by category with stage metadata and vocabulary",
     mimeType: "application/json",
   },
   {

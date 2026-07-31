@@ -30,11 +30,11 @@ export const executeToolInputSchema = z.object({
 export type ExecuteToolInput = z.infer<typeof executeToolInputSchema>;
 
 /**
- * Session-bound hub dispatch surface. The server factory wraps the
- * session's HubToolHandler (which holds the register-once identity
- * registry) with the MCP session key, so tb.hub callers get an implicit
- * agentId after their first register/quick_join. agentId remains
- * overridable per call for multi-agent flows within one session.
+ * Hub dispatch surface over the process-shared hub storage. Identity is
+ * resolved per request from the durable agent record (SPEC-HUB-003): a
+ * tb.hub call acts as the agentId it carries, or as the process-level env
+ * identity when it carries none. Nothing here is session-bound, so multiple
+ * agents can be driven from one connection without misattribution.
  */
 export interface HubDispatcher {
   handle(input: { operation: string; [key: string]: unknown }): Promise<HubToolResult>;
@@ -55,7 +55,7 @@ export const EXECUTE_TOOL = {
   name: "thoughtbox_execute",
   description: `Run JavaScript using the \`tb\` SDK to chain Thoughtbox operations in a single call.
 
-**One state-mutating operation per call.** Submit only one \`tb.thought()\`, or one hub-mutating call (\`tb.hub.register()\`, \`tb.hub.quickJoin()\`, \`tb.hub.createWorkspace()\`, \`tb.hub.createProblem()\`, \`tb.hub.claimProblem()\`, \`tb.hub.updateProblem()\`, \`tb.hub.createProposal()\`, \`tb.hub.reviewProposal()\`, \`tb.hub.mergeProposal()\`, \`tb.hub.markConsensus()\`, \`tb.hub.endorseConsensus()\`, \`tb.hub.postMessage()\`, etc.), per \`thoughtbox_execute\` invocation. Each response carries guidance (patterns, session state, workspace state) that should inform your next operation. Batching multiple state-mutating calls bypasses this feedback loop and produces lower-quality reasoning. Read-only operations — \`tb.session.*\` and hub reads (\`tb.hub.whoami()\`, \`tb.hub.listWorkspaces()\`, \`tb.hub.listProblems()\`, \`tb.hub.readyProblems()\`, \`tb.hub.blockedProblems()\`, \`tb.hub.listProposals()\`, \`tb.hub.listConsensus()\`, \`tb.hub.readChannel()\`, \`tb.hub.workspaceStatus()\`, \`tb.hub.workspaceDigest()\`) — plus session variables (\`tb.vars.*\` — store intermediate values across execute calls within this MCP session) may be freely chained.
+**One state-mutating operation per call.** Submit only one \`tb.thought()\`, or one hub-mutating call (\`tb.hub.register()\`, \`tb.hub.quickJoin()\`, \`tb.hub.createWorkspace()\`, \`tb.hub.transferCoordinator()\`, \`tb.hub.createProblem()\`, \`tb.hub.claimProblem()\`, \`tb.hub.updateProblem()\`, \`tb.hub.createProposal()\`, \`tb.hub.reviewProposal()\`, \`tb.hub.mergeProposal()\`, \`tb.hub.markConsensus()\`, \`tb.hub.endorseConsensus()\`, \`tb.hub.postMessage()\`, etc.), per \`thoughtbox_execute\` invocation. Each response carries guidance (patterns, session state, workspace state) that should inform your next operation. Batching multiple state-mutating calls bypasses this feedback loop and produces lower-quality reasoning. Read-only operations — \`tb.session.*\` and hub reads (\`tb.hub.whoami()\`, \`tb.hub.listWorkspaces()\`, \`tb.hub.listProblems()\`, \`tb.hub.readyProblems()\`, \`tb.hub.blockedProblems()\`, \`tb.hub.listProposals()\`, \`tb.hub.listConsensus()\`, \`tb.hub.readChannel()\`, \`tb.hub.workspaceStatus()\`, \`tb.hub.workspaceDigest()\`) — plus session variables (\`tb.vars.*\` — store intermediate values across execute calls within this MCP session) may be freely chained.
 
 **Pick a semantic thoughtType.** \`reasoning\` is the fallback, not the default: it records that you thought, but leaves nothing a teammate or a later session can query. Whenever a thought carries a durable finding, use the typed form that matches it — \`action_report\` (you ran something; what happened, whether it is reversible), \`belief_snapshot\` (the entities, constraints, and risks you currently believe are in play), \`decision_frame\` (the options you weighed, with exactly one \`selected: true\`), \`assumption_update\` (a belief moved between believed / uncertain / refuted, and what triggered the move), \`context_snapshot\` (the tools, model, and data sources you had available), \`progress\` (a task's status). These populate structured payloads that \`tb.session.queryThoughts({ sessionId, type })\` retrieves directly; a \`reasoning\` thought is prose someone has to re-read to use.
 

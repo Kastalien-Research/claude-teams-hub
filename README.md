@@ -12,7 +12,7 @@ for live observation.
 
 ## Surface
 
-- `tb.hub` — 28 operations: identity, workspaces, problems, proposals,
+- `tb.hub` — 29 operations: identity, workspaces, problems, proposals,
   consensus, channels, status.
 - `tb.thought` / `tb.session` — the thought ledger, **transitional**: kept
   because consensus markers and proposal merges anchor to thought references.
@@ -22,6 +22,35 @@ for live observation.
   `team-hub-keeps-the-thoughtbox-thought-engine-as-a-transitional-findings-substrate`
   in the parent workspace's decisions ledger).
 - `tb.vars` — session-scoped variables.
+
+## Identity
+
+An agent is a **durable record**, not a connection. `register` (or
+`quick_join`) mints one and returns an `agentId`: **record it and pass it as
+`agentId` on every later hub call.** The same agentId works from a new
+connection, a new MCP session, or a different client, for as long as the
+record exists — reconnecting costs nothing and re-registering is never how you
+get an identity back (it mints a second agent with no workspace memberships).
+
+Nothing is implicit per connection. A mutation that carries no `agentId`
+resolves only from process-level configuration —
+`THOUGHTBOX_AGENT_ID` + `THOUGHTBOX_AGENT_NAME`, which apply uniformly to
+every request — and otherwise fails telling you to pass one. The old
+"first registration in a session becomes the default" behavior is gone: it
+misattributed sub-agent work to whichever agent happened to register first on
+a shared connection.
+
+Local mode is assertion-based: any existing `agentId` resolves, because the
+trust boundary is the machine. (A hosted multi-tenant mode binds each agent to
+the authenticated principal that created it — `ownerPrincipal` on the record;
+that path is implemented and tested but not wired here, since this server has
+no auth layer.)
+
+**Coordinator power is durable too.** The agent that created a workspace keeps
+`merge_proposal` across disconnection — reconnect and pass the same agentId.
+`transfer_coordinator({ workspaceId, toAgentId })` hands the role to another
+member deliberately; the previous coordinator becomes a contributor. Losing the
+agentId itself is the one unrecoverable case in local mode, so keep it.
 
 Storage is filesystem-only (`HUB_DATA_DIR`, default `~/.team-hub`);
 `THOUGHTBOX_STORAGE=memory` keeps everything volatile for tests. There is no

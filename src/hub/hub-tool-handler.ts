@@ -2,16 +2,21 @@
  * Hub Tool Handler — testable wrapper connecting hub domain to MCP tool interface
  *
  * This module creates a handler that:
- * 1. Resolves agent identity from env vars on first call
+ * 1. Resolves agent identity PER REQUEST from durable storage (SPEC-HUB-003)
  * 2. Routes operations through the hub-handler
  * 3. Returns MCP-formatted content results
+ *
+ * Identity resolution consults no connection state. The MCP session id is
+ * still accepted so existing transports can pass it, but nothing reads it:
+ * the same call sequence resolves identically with distinct session ids, with
+ * one, or with none (c7), which is what makes the identity layer ready for
+ * MCP 2026-07-28 sessionless operation.
  */
 
-import { createHubHandler, type HubEvent, type HubHandler } from './hub-handler.js';
-import { resolveAgentId } from './agent-identity.js';
+import { createHubHandler, type HubEvent } from './hub-handler.js';
+import { createIdentityResolver } from './identity-resolver.js';
 import type { HubStorage } from './hub-types.js';
 import { getOperation as getHubOperation } from './operations.js';
-import { SessionIdentityRegistry } from './session-identity.js';
 
 interface ThoughtStore {
   createSession(sessionId: string): Promise<void>;
@@ -30,11 +35,13 @@ export interface HubToolHandlerOptions {
   envAgentName?: string;
   onEvent?: (event: HubEvent) => void;
   /**
-   * Shared session identity registry. Pass the same instance to other
-   * namespaces that follow the explicit-agentId convention (tb.claims) so
-   * one hub registration grants an identity across all of them.
+   * Hosted multi-tenant deployment: agents are bound to the authenticated
+   * principal of the request that created them, and acting as an agent
+   * requires that principal (c3). Local fs mode — the only mode this server
+   * wires today — leaves this false and resolves any existing agentId by
+   * assertion, the trust boundary being the machine.
    */
-  identityRegistry?: SessionIdentityRegistry;
+  hostedMode?: boolean;
 }
 
 type HubContentBlock =
@@ -46,130 +53,81 @@ export interface HubToolResult {
   isError?: boolean;
 }
 
-export interface HubToolHandler {
-  handle(input: { operation: string; [key: string]: unknown }, mcpSessionId?: string): Promise<HubToolResult>;
+/** Per-request context the transport supplies. */
+export interface HubRequestContext {
+  /**
+   * The authenticated principal (API key id / OAuth subject) of this
+   * request, in hosted mode. Nothing supplies it in local fs mode.
+   */
+  principal?: string;
 }
 
+export interface HubToolHandler {
+  handle(
+    input: { operation: string; [key: string]: unknown },
+    /** Accepted for transport compatibility; identity resolution ignores it. */
+    mcpSessionId?: string,
+    request?: HubRequestContext,
+  ): Promise<HubToolResult>;
+}
+
+/** Operations that mint identity: they cannot require the handle they hand out. */
+const IDENTITY_MINTING_OPERATIONS = new Set(['register', 'quick_join']);
+
 export function createHubToolHandler(options: HubToolHandlerOptions): HubToolHandler {
-  const { hubStorage, thoughtStore, envAgentId, envAgentName, onEvent } = options;
+  const { hubStorage, thoughtStore, envAgentId, envAgentName, onEvent, hostedMode } = options;
 
-  const hubHandler = createHubHandler(hubStorage, thoughtStore, onEvent);
+  const hubHandler = createHubHandler(hubStorage, thoughtStore, onEvent, { hostedMode });
 
-  // Connection-scoped identity registry: env-var-resolved or
-  // first-registered agentId per session becomes the default; the registry
-  // tracks all agentIds registered within a session (for multi-agent).
-  // Shared with other namespaces (tb.claims) when passed in via options.
-  const identities = options.identityRegistry ?? new SessionIdentityRegistry();
+  const identities = createIdentityResolver({
+    storage: hubStorage,
+    hostedMode,
+    envAgentId,
+    envAgentName,
+  });
 
-  // Only the RESOLUTION of the env identity is handler-wide (it mints or looks
-  // up one agent for the process); REGISTRATION is per session. Memoizing the
-  // registration alongside it bound the env identity to whichever sessionKey
-  // called first — every later session got the settled promise back, was never
-  // registered, and failed authenticated ops with 'Register first'.
-  //
-  // Memoized as a PROMISE, not a boolean: a boolean flipped before the await
-  // let a concurrent caller skip past an env resolution still in flight and
-  // resolve a null default, minting an agent the env identity should have
-  // been (docs/known-issues.md #5). A failed attempt clears the memo so it
-  // is retried rather than poisoning every later call.
-  let envResolution: Promise<string | null> | null = null;
-
-  async function ensureEnvResolved(sessionKey: string): Promise<void> {
-    envResolution ??= resolveAgentId(hubStorage, envAgentId, envAgentName).catch(
-      (error: unknown) => {
-        envResolution = null;
-        throw error;
-      },
-    );
-    const resolved = await envResolution;
-    // Idempotent per session: register() adds to the session's agent set and
-    // only fills an EMPTY default, so repeating it cannot displace an identity
-    // the session registered explicitly.
-    if (resolved) {
-      identities.register(sessionKey, resolved);
-    }
-  }
-
-  // Registration establishes the session's implicit identity, and the
-  // resolve → register → capture window spans an await. Two concurrent first
-  // registrations therefore both observed a null session default and both
-  // minted an agent; only the first-completed became the implicit identity,
-  // so the other caller's implicit calls silently acted as it and failed
-  // `Not a member of this workspace` (docs/known-issues.md #5). Serializing
-  // per sessionKey makes that window atomic: the second caller observes the
-  // first's identity and quick_join's reuse path (issue #1) can fire.
-  const registrationLocks = new Map<string, Promise<void>>();
-
-  async function withRegistrationLock<T>(
-    sessionKey: string, run: () => Promise<T>
-  ): Promise<T> {
-    const prior = registrationLocks.get(sessionKey) ?? Promise.resolve();
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => { release = resolve; });
-    const tail = prior.then(() => held);
-    registrationLocks.set(sessionKey, tail);
-    await prior;
-    try {
-      return await run();
-    } finally {
-      release();
-      // Drop the entry when nothing queued behind us, so a long-lived server
-      // does not retain one promise per session it ever saw.
-      if (registrationLocks.get(sessionKey) === tail) {
-        registrationLocks.delete(sessionKey);
-      }
-    }
-  }
-
-  async function dispatch(
-    sessionKey: string,
+  async function resolveActingAgent(
     operation: string,
     callerAgentId: unknown,
-    args: Record<string, unknown>,
-  ): Promise<unknown> {
-    // register always mints; quick_join sees the session default so the
-    // hub handler can reuse it instead of registering an orphan
-    // (docs/known-issues.md #1). Explicit callerAgentId still applies
-    // only to stage-1+ operations.
-    const agentId =
-      operation === 'register'
-        ? null
-        : operation === 'quick_join'
-          ? identities.resolve(sessionKey, undefined)
-          : identities.resolve(sessionKey, callerAgentId);
-
-    const result = await hubHandler.handle(agentId, operation, args);
-
-    // Capture registration results into the session registry
-    if (operation === 'register' || operation === 'quick_join') {
-      captureRegistration(sessionKey, result);
+    principal: string | undefined,
+  ): Promise<string | null> {
+    // register always mints a fresh agent, so it never resolves an identity.
+    if (operation === 'register') return null;
+    // quick_join resolves one when the caller carries a handle (so a repeat
+    // join reuses the agent instead of minting an orphan) but must not
+    // require one — minting is half of what it does.
+    if (IDENTITY_MINTING_OPERATIONS.has(operation)) {
+      return identities.resolveOptional(callerAgentId, principal);
     }
-
-    return result;
-  }
-
-  function captureRegistration(
-    sessionKey: string, result: unknown
-  ): void {
-    if (result && typeof result === 'object' && 'agentId' in result) {
-      identities.register(sessionKey, (result as { agentId: string }).agentId);
-    }
+    // list_workspaces is unauthenticated; asking it for an identity would
+    // make discovery impossible before registration.
+    if (operation === 'list_workspaces') return null;
+    return identities.resolve(callerAgentId, principal);
   }
 
   return {
-    async handle(input, mcpSessionId?) {
+    async handle(input, _mcpSessionId?, request?) {
       const { operation, agentId: callerAgentId, ...args } = input;
-      const sessionKey = mcpSessionId || '__default__';
-
-      await ensureEnvResolved(sessionKey);
+      const principal = request?.principal;
 
       try {
-        const isRegistration = operation === 'register' || operation === 'quick_join';
-        const result = isRegistration
-          ? await withRegistrationLock(sessionKey, () =>
-              dispatch(sessionKey, operation as string, callerAgentId, args as Record<string, unknown>))
-          : await dispatch(
-              sessionKey, operation as string, callerAgentId, args as Record<string, unknown>);
+        // A configured env identity exists as a record from the first call
+        // onward, so a caller may address it explicitly without having made
+        // an agentId-less call first. Memoized in the resolver.
+        await identities.ensureEnvIdentity();
+
+        const agentId = await resolveActingAgent(
+          operation as string,
+          callerAgentId,
+          principal,
+        );
+
+        const result = await hubHandler.handle(
+          agentId,
+          operation as string,
+          args as Record<string, unknown>,
+          principal,
+        );
 
         const content: HubContentBlock[] = [
           { type: 'text' as const, text: JSON.stringify(result, null, 2) },

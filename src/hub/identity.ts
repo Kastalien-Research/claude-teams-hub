@@ -11,7 +11,12 @@ import type { AgentIdentity, HubStorage } from './hub-types.js';
 import { isValidProfile, getProfile } from './profiles-registry.js';
 
 export interface IdentityManager {
-  register(args: { name: string; clientInfo?: string; profile?: string }): Promise<{ agentId: string; name: string; role: 'contributor' }>;
+  /**
+   * `ownerPrincipal` is the authenticated principal of the registering
+   * request (SPEC-HUB-003 c1). Supplied only in hosted multi-tenant mode;
+   * in local fs mode it is undefined and the field never reaches the record.
+   */
+  register(args: { name: string; clientInfo?: string; profile?: string; ownerPrincipal?: string }): Promise<{ agentId: string; name: string; role: 'contributor' }>;
   whoami(agentId: string): Promise<{
     agentId: string;
     name: string;
@@ -25,7 +30,7 @@ export interface IdentityManager {
 
 export function createIdentityManager(storage: HubStorage): IdentityManager {
   return {
-    async register({ name, clientInfo, profile }) {
+    async register({ name, clientInfo, profile, ownerPrincipal }) {
       // Validate profile if provided
       if (profile !== undefined && !isValidProfile(profile)) {
         const validProfiles = ['MANAGER', 'ARCHITECT', 'DEBUGGER', 'SECURITY', 'RESEARCHER', 'REVIEWER'];
@@ -39,6 +44,9 @@ export function createIdentityManager(storage: HubStorage): IdentityManager {
         ...(profile && { profile }),
         clientInfo,
         registeredAt: new Date().toISOString(),
+        // Omitted, not set to undefined: local-mode records must not carry
+        // the key at all (c1).
+        ...(ownerPrincipal !== undefined && { ownerPrincipal }),
       };
 
       await storage.saveAgent(agent);

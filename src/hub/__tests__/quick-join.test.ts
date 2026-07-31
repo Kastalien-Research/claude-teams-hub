@@ -205,9 +205,11 @@ describe('quick_join operation', () => {
     });
 
     // A DIFFERENT name is the sanctioned multi-agent flow (T-HTW-14): a new
-    // agent is minted — but the result must SAY the session default is
-    // unchanged, so the caller cannot mistake the new agent for itself.
-    it('mints a sub-agent for a different name, and says the default is unchanged', async () => {
+    // agent is minted — but the result must SAY which agentId is which, so
+    // the caller cannot mistake the new agent for itself. Post-SPEC-HUB-003
+    // there is no session default to be unchanged; what is unchanged is the
+    // identity this call resolved to.
+    it('mints a sub-agent for a different name, and names both identities', async () => {
       const before = (await storage.getAgents()).length;
 
       const subJoin = await handler.handle(firstJoin.agentId, 'quick_join', {
@@ -217,8 +219,9 @@ describe('quick_join operation', () => {
 
       expect(subJoin.agentId).not.toBe(firstJoin.agentId);
       expect((await storage.getAgents()).length).toBe(before + 1);
-      expect(subJoin.note).toMatch(/default identity remains 'Reviewer-1'/);
+      expect(subJoin.note).toMatch(/'Reviewer-1' \(.+\), is unchanged/);
       expect(subJoin.note).toContain(subJoin.agentId);
+      expect(subJoin.note).toContain(firstJoin.agentId);
     });
   });
 });

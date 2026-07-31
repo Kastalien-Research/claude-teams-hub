@@ -57,10 +57,13 @@ describe('Channel Resources', () => {
       onEvent,
     });
 
-    // Register + create workspace
-    await handler.handle({ operation: 'register', name: 'alice' });
+    // Register + create workspace. Identity is per-request (SPEC-HUB-003),
+    // so the registered agentId travels on every later call.
+    const regResult = await handler.handle({ operation: 'register', name: 'alice' });
+    const agentId = JSON.parse(regResult.content[0].text).agentId;
     const wsResult = await handler.handle({
       operation: 'create_workspace',
+      agentId,
       name: 'ws',
       description: 'test',
     });
@@ -69,6 +72,7 @@ describe('Channel Resources', () => {
     // Create problem — should trigger event
     await handler.handle({
       operation: 'create_problem',
+      agentId,
       workspaceId: ws.workspaceId,
       title: 'Bug',
       description: 'Fix it',
@@ -90,9 +94,11 @@ describe('Channel Resources', () => {
     });
 
     // Setup: register + workspace + problem
-    await handler.handle({ operation: 'register', name: 'bob' });
+    const regResult = await handler.handle({ operation: 'register', name: 'bob' });
+    const agentId = JSON.parse(regResult.content[0].text).agentId;
     const wsResult = await handler.handle({
       operation: 'create_workspace',
+      agentId,
       name: 'ws',
       description: 'test',
     });
@@ -100,6 +106,7 @@ describe('Channel Resources', () => {
 
     const probResult = await handler.handle({
       operation: 'create_problem',
+      agentId,
       workspaceId: ws.workspaceId,
       title: 'Issue',
       description: 'desc',
@@ -111,6 +118,7 @@ describe('Channel Resources', () => {
     // Post message — should trigger message_posted event
     await handler.handle({
       operation: 'post_message',
+      agentId,
       workspaceId: ws.workspaceId,
       problemId: prob.problemId,
       content: 'Hi!',
@@ -128,9 +136,11 @@ describe('Channel Resources', () => {
     const handler = createHubToolHandler({ hubStorage, thoughtStore });
 
     // Setup full flow
-    await handler.handle({ operation: 'register', name: 'carol' });
+    const regResult = await handler.handle({ operation: 'register', name: 'carol' });
+    const agentId = JSON.parse(regResult.content[0].text).agentId;
     const wsResult = await handler.handle({
       operation: 'create_workspace',
+      agentId,
       name: 'ws',
       description: 'test',
     });
@@ -138,6 +148,7 @@ describe('Channel Resources', () => {
 
     const probResult = await handler.handle({
       operation: 'create_problem',
+      agentId,
       workspaceId: ws.workspaceId,
       title: 'Task',
       description: 'Do it',
@@ -147,12 +158,14 @@ describe('Channel Resources', () => {
     // Post messages
     await handler.handle({
       operation: 'post_message',
+      agentId,
       workspaceId: ws.workspaceId,
       problemId: prob.problemId,
       content: 'Starting work',
     });
     await handler.handle({
       operation: 'post_message',
+      agentId,
       workspaceId: ws.workspaceId,
       problemId: prob.problemId,
       content: 'Done!',
@@ -161,6 +174,7 @@ describe('Channel Resources', () => {
     // Read channel
     const readResult = await handler.handle({
       operation: 'read_channel',
+      agentId,
       workspaceId: ws.workspaceId,
       problemId: prob.problemId,
     });

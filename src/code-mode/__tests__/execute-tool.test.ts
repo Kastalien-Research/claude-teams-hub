@@ -430,12 +430,14 @@ describe("thoughtbox_execute tb.vars (RLM-lite session variables)", () => {
 });
 
 describe("thoughtbox_execute tb.hub", () => {
-  it("register makes the agentId implicit for subsequent calls", async () => {
+  // SPEC-HUB-003: register hands back a durable handle, and the next call
+  // carries it. There is no implicit "current agent" for the connection.
+  it("register returns a handle later calls carry", async () => {
     const { tool } = await createHubHarness();
     const result = await tool.handle({
       code: `async () => {
         const reg = await tb.hub.register({ name: "Coordinator", profile: "MANAGER" });
-        const who = await tb.hub.whoami();
+        const who = await tb.hub.whoami({ agentId: reg.agentId });
         return { reg, who };
       }`,
     });
@@ -450,22 +452,26 @@ describe("thoughtbox_execute tb.hub", () => {
     const { tool } = await createHubHarness();
     const result = await tool.handle({
       code: `async () => {
-        await tb.hub.register({ name: "Coordinator" });
+        const me = await tb.hub.register({ name: "Coordinator" });
         const ws = await tb.hub.createWorkspace({
+          agentId: me.agentId,
           name: "Phase 4 Workspace",
           description: "tb.hub namespace test",
         });
         const prob = await tb.hub.createProblem({
+          agentId: me.agentId,
           workspaceId: ws.workspaceId,
           title: "Expose hub over Code Mode",
           description: "Map operations under tb.hub",
         });
         await tb.hub.postMessage({
+          agentId: me.agentId,
           workspaceId: ws.workspaceId,
           problemId: prob.problemId,
           content: "starting work",
         });
         const channel = await tb.hub.readChannel({
+          agentId: me.agentId,
           workspaceId: ws.workspaceId,
           problemId: prob.problemId,
         });
@@ -491,14 +497,16 @@ describe("thoughtbox_execute tb.hub", () => {
 
     const setup = await tool.handle({
       code: `async () => {
-        await tb.hub.register({ name: "Coordinator" });
+        const coordinator = await tb.hub.register({ name: "Coordinator" });
         const ws = await tb.hub.createWorkspace({
+          agentId: coordinator.agentId,
           name: "Merge Workspace",
           description: "merge_proposal persistence test",
         });
         const reviewer = await tb.hub.register({ name: "Reviewer" });
         await tb.hub.joinWorkspace({ workspaceId: ws.workspaceId, agentId: reviewer.agentId });
         const prop = await tb.hub.createProposal({
+          agentId: coordinator.agentId,
           workspaceId: ws.workspaceId,
           title: "Real delegation",
           description: "Replace the stub with a facade",
@@ -512,6 +520,7 @@ describe("thoughtbox_execute tb.hub", () => {
           agentId: reviewer.agentId,
         });
         const merged = await tb.hub.mergeProposal({
+          agentId: coordinator.agentId,
           workspaceId: ws.workspaceId,
           proposalId: prop.proposalId,
           mergeMessage: "Merged: stub replaced with real facade",
@@ -534,7 +543,7 @@ describe("thoughtbox_execute tb.hub", () => {
     ).toBe(true);
   });
 
-  it("rejects agentId values not registered in this session", async () => {
+  it("rejects an agentId with no durable agent record", async () => {
     const { tool } = await createHubHarness();
     const result = await tool.handle({
       code: `async () => {
@@ -544,7 +553,7 @@ describe("thoughtbox_execute tb.hub", () => {
     });
     const output = JSON.parse(result.content[0].text);
     expect(output.result).toBeNull();
-    expect(output.error).toContain("not registered in this session");
+    expect(output.error).toContain("Unknown agent 'not-a-registered-agent'");
   });
 
   it("merges across surfaces when the hub thought store is shared", async () => {
@@ -552,10 +561,10 @@ describe("thoughtbox_execute tb.hub", () => {
     // The /hub/api surface and every MCP session each hold their own
     // ThoughtboxStorage instance; only a SHARED hub thought store
     // (server-factory's hubThoughtStore) lets a merge initiated on one
-    // surface find a mainSession created on another. Coordinator identity
-    // is session-bound in tb.hub, so the cross-surface merge goes through
-    // the registry-less hub handler (the /hub/api path) with an explicit
-    // coordinator agentId.
+    // surface find a mainSession created on another. The cross-surface merge
+    // goes through the hub handler directly (the /hub/api path) with the
+    // coordinator's agentId — which works precisely because identity is
+    // durable rather than bound to the surface that created it.
     const hubDir = await mkdtemp(join(tmpdir(), "tb-hub-xsurface-"));
     tempHubDirs.push(hubDir);
     const hubStorage = createFileSystemHubStorage(hubDir);
@@ -574,12 +583,14 @@ describe("thoughtbox_execute tb.hub", () => {
       code: `async () => {
         const coordinator = await tb.hub.register({ name: "Coordinator" });
         const ws = await tb.hub.createWorkspace({
+          agentId: coordinator.agentId,
           name: "Cross-surface Workspace",
           description: "created via tb.hub",
         });
         const reviewer = await tb.hub.register({ name: "Reviewer" });
         await tb.hub.joinWorkspace({ workspaceId: ws.workspaceId, agentId: reviewer.agentId });
         const prop = await tb.hub.createProposal({
+          agentId: coordinator.agentId,
           workspaceId: ws.workspaceId,
           title: "Cross-surface merge",
           description: "merge from a different surface",
@@ -621,6 +632,7 @@ describe("thoughtbox_execute tb.hub", () => {
     const propB = await sessionTool.handle({
       code: `async () => {
         const prop = await tb.hub.createProposal({
+          agentId: "${coordinator.agentId}",
           workspaceId: "${ws.workspaceId}",
           title: "Doomed merge",
           description: "isolated thought store cannot see mainSession",

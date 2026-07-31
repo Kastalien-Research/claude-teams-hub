@@ -19,6 +19,7 @@ export const HUB_SDK_METHODS: Record<string, string> = {
   whoami: "whoami",
   createWorkspace: "create_workspace",
   joinWorkspace: "join_workspace",
+  transferCoordinator: "transfer_coordinator",
   getProfilePrompt: "get_profile_prompt",
   createProblem: "create_problem",
   claimProblem: "claim_problem",
