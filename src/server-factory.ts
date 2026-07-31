@@ -153,8 +153,14 @@ export async function createMcpServer(args: CreateMcpServerArgs = {}): Promise<M
   const TEAM_HUB_INSTRUCTIONS = `Claude Teams Hub is a multi-agent coordination server using Code Mode.
 
 Two tools:
-- \`thoughtbox_search\`: write JavaScript to query the operation/prompt/resource catalog
-- \`thoughtbox_execute\`: write JavaScript using the \`tb\` SDK to chain operations
+- \`thoughtbox_search\`: query the operation/prompt/resource catalog (\`catalog\` is in scope)
+- \`thoughtbox_execute\`: chain operations using the \`tb\` SDK
+
+Both tools take a \`code\` string that **must evaluate to a function**: the string is
+evaluated as a single expression and the result is called with no arguments. Submit
+\`async () => { ... }\` — bare top-level statements fail to parse.
+- search: \`async () => Object.keys(catalog.operations)\`
+- execute: \`async () => { const s = await tb.session.list(); return s; }\`
 
 Workflow: search to discover available operations, then execute code against them.
 

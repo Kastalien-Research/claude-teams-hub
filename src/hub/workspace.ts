@@ -12,6 +12,7 @@ import type {
   Problem,
   Proposal,
 } from './hub-types.js';
+import { PENDING_PROPOSAL_STATUSES } from './hub-types.js';
 
 export interface ThoughtStoreForWorkspace {
   createSession(sessionId: string): Promise<void>;
@@ -150,7 +151,7 @@ export function createWorkspaceManager(
         workspace,
         agents: workspace.agents,
         openProblems: problems.filter(p => p.status === 'open' || p.status === 'in-progress').length,
-        openProposals: proposals.filter(p => p.status === 'open' || p.status === 'reviewing').length,
+        openProposals: proposals.filter(p => PENDING_PROPOSAL_STATUSES.includes(p.status)).length,
       };
     },
 
