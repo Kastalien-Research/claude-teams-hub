@@ -15,6 +15,7 @@ import type {
   ConsensusMarker,
   Channel,
 } from './hub-types.js';
+import { statusAfterReview } from './hub-types.js';
 
 /**
  * Single-writer storage: append operations below are read-modify-write on
@@ -26,12 +27,46 @@ async function ensureDir(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true });
 }
 
+/**
+ * Reads one JSON record, or null if it cannot be produced.
+ *
+ * The list* readers below discard nulls, so a record that fails to read
+ * disappears from list_problems, list_proposals, and workspace_digest. An
+ * absent file is a normal outcome and stays silent; anything else — corrupt
+ * JSON, a truncated write, EACCES, EISDIR — means state that exists on disk
+ * is being dropped, and that has to leave a trace naming the file.
+ */
 async function readJson<T>(path: string): Promise<T | null> {
   try {
     const content = await readFile(path, 'utf-8');
     return JSON.parse(content) as T;
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[hub-storage] unreadable record dropped: ${path} — ${message}`);
+    }
     return null;
+  }
+}
+
+/**
+ * Lists the entries of a collection directory, or [] if it cannot be listed.
+ *
+ * The record-level twin of `readJson`, and the more dangerous of the two: an
+ * unreadable record drops one item, an unlistable directory drops the whole
+ * collection, so `list_problems` returning [] would mean either "none" or
+ * "all of them, invisibly". A directory that does not exist yet is normal on a
+ * first run and stays silent; every other failure names the directory.
+ */
+async function readdirOrWarn(dir: string): Promise<string[]> {
+  try {
+    return await readdir(dir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[hub-storage] unlistable directory, collection dropped: ${dir} — ${message}`);
+    }
+    return [];
   }
 }
 
@@ -83,17 +118,13 @@ export function createFileSystemHubStorage(dataDir: string): HubStorage {
 
     async listWorkspaces() {
       const wsRoot = join(hubDir, 'workspaces');
-      try {
-        const dirs = await readdir(wsRoot);
-        const results: Workspace[] = [];
-        for (const dir of dirs) {
-          const ws = await readJson<Workspace>(join(wsRoot, dir, 'workspace.json'));
-          if (ws) results.push(ws);
-        }
-        return results;
-      } catch {
-        return [];
+      const dirs = await readdirOrWarn(wsRoot);
+      const results: Workspace[] = [];
+      for (const dir of dirs) {
+        const ws = await readJson<Workspace>(join(wsRoot, dir, 'workspace.json'));
+        if (ws) results.push(ws);
       }
+      return results;
     },
 
     // Problem operations
@@ -110,19 +141,15 @@ export function createFileSystemHubStorage(dataDir: string): HubStorage {
 
     async listProblems(workspaceId) {
       const dir = join(workspaceDir(workspaceId), 'problems');
-      try {
-        const files = await readdir(dir);
-        const results: Problem[] = [];
-        for (const file of files) {
-          if (file.endsWith('.json')) {
-            const prob = await readJson<Problem>(join(dir, file));
-            if (prob) results.push(prob);
-          }
+      const files = await readdirOrWarn(dir);
+      const results: Problem[] = [];
+      for (const file of files) {
+        if (file.endsWith('.json')) {
+          const prob = await readJson<Problem>(join(dir, file));
+          if (prob) results.push(prob);
         }
-        return results;
-      } catch {
-        return [];
       }
+      return results;
     },
 
     // Proposal operations
@@ -139,19 +166,15 @@ export function createFileSystemHubStorage(dataDir: string): HubStorage {
 
     async listProposals(workspaceId) {
       const dir = join(workspaceDir(workspaceId), 'proposals');
-      try {
-        const files = await readdir(dir);
-        const results: Proposal[] = [];
-        for (const file of files) {
-          if (file.endsWith('.json')) {
-            const prop = await readJson<Proposal>(join(dir, file));
-            if (prop) results.push(prop);
-          }
+      const files = await readdirOrWarn(dir);
+      const results: Proposal[] = [];
+      for (const file of files) {
+        if (file.endsWith('.json')) {
+          const prop = await readJson<Proposal>(join(dir, file));
+          if (prop) results.push(prop);
         }
-        return results;
-      } catch {
-        return [];
       }
+      return results;
     },
 
     async appendReview(workspaceId, proposalId, review) {
@@ -160,7 +183,7 @@ export function createFileSystemHubStorage(dataDir: string): HubStorage {
       if (!proposal.reviews.some(r => r.id === review.id)) {
         proposal.reviews.push(review);
       }
-      proposal.status = 'reviewing';
+      proposal.status = statusAfterReview(proposal.reviews);
       proposal.updatedAt = new Date().toISOString();
       await this.saveProposal(proposal);
     },
@@ -179,19 +202,15 @@ export function createFileSystemHubStorage(dataDir: string): HubStorage {
 
     async listConsensusMarkers(workspaceId) {
       const dir = join(workspaceDir(workspaceId), 'consensus');
-      try {
-        const files = await readdir(dir);
-        const results: ConsensusMarker[] = [];
-        for (const file of files) {
-          if (file.endsWith('.json')) {
-            const marker = await readJson<ConsensusMarker>(join(dir, file));
-            if (marker) results.push(marker);
-          }
+      const files = await readdirOrWarn(dir);
+      const results: ConsensusMarker[] = [];
+      for (const file of files) {
+        if (file.endsWith('.json')) {
+          const marker = await readJson<ConsensusMarker>(join(dir, file));
+          if (marker) results.push(marker);
         }
-        return results;
-      } catch {
-        return [];
       }
+      return results;
     },
 
     async appendEndorsement(workspaceId, markerId, agentId) {

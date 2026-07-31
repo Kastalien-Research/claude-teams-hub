@@ -5,7 +5,12 @@
  */
 
 import type { HubStorage, HubOperation, DisclosureStage } from './hub-types.js';
-import { STAGE_OPERATIONS } from './hub-types.js';
+import {
+  isReviewVerdict,
+  PENDING_PROPOSAL_STATUSES,
+  REVIEW_VERDICTS,
+  STAGE_OPERATIONS,
+} from './hub-types.js';
 import { createIdentityManager } from './identity.js';
 import { createWorkspaceManager } from './workspace.js';
 import { createProblemsManager } from './problems.js';
@@ -355,6 +360,14 @@ export function createHubHandler(
             } });
             return result;
           case 'review_proposal':
+            // `args` is untyped here and the cast below launders it, so an
+            // out-of-union verdict used to reach storage and then read as
+            // "not an approval" — indistinguishable from request-changes.
+            if (!isReviewVerdict(args.verdict)) {
+              throw new Error(
+                `Invalid verdict '${String(args.verdict)}'. Valid verdicts: ${REVIEW_VERDICTS.join(', ')}`,
+              );
+            }
             result = await proposals.reviewProposal(agentId, args as any);
             emit({ type: 'proposal_reviewed', workspaceId, data: {
               proposalId: args.proposalId,
@@ -437,7 +450,7 @@ export function createHubHandler(
             });
 
             const pendingProposals = wsProposals
-              .filter(p => p.status === 'open' || p.status === 'reviewing')
+              .filter(p => PENDING_PROPOSAL_STATUSES.includes(p.status))
               .map(p => ({
                 id: p.id,
                 title: p.title,

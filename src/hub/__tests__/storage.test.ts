@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { readFile } from 'node:fs/promises';
 import { createFileSystemHubStorage } from '../hub-storage-fs.js';
@@ -240,5 +240,156 @@ describe('Hub Storage — In-Memory Double Honors The saveChannel Contract', () 
     const loaded = await storage.getChannel('ws-1', 'prob-1');
     expect(loaded).not.toBeNull();
     expect(loaded!.id).toBe('prob-1');
+  });
+});
+
+// A file that exists but cannot be parsed is a different event from a file
+// that is absent, and only the first one means data is being dropped. The
+// list* readers discard nulls, so without a log line a corrupt problem or
+// proposal disappears from list_problems and workspace_digest in silence.
+describe('Hub Storage — Unreadable Files Are Reported, Not Swallowed', () => {
+  let dataDir: string;
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), 'hub-corrupt-'));
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(async () => {
+    warn.mockRestore();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  it('listProblems warns with the file path when a problem file is corrupt', async () => {
+    const storage = createFileSystemHubStorage(dataDir);
+    const problemsDir = join(dataDir, 'hub', 'workspaces', 'ws-1', 'problems');
+    await mkdir(problemsDir, { recursive: true });
+
+    const goodPath = join(problemsDir, 'prob-good.json');
+    const badPath = join(problemsDir, 'prob-bad.json');
+    await writeFile(goodPath, JSON.stringify({
+      id: 'prob-good', workspaceId: 'ws-1', title: 'readable', description: '',
+      createdBy: 'a', status: 'open', comments: [], createdAt: '', updatedAt: '',
+    }), 'utf-8');
+    // Truncated mid-object — exactly what a crashed write leaves behind.
+    await writeFile(badPath, '{"id":"prob-bad","workspaceId":"ws-1","tit', 'utf-8');
+
+    const problems = await storage.listProblems('ws-1');
+
+    // The corrupt record is still dropped from the list — the fix is that the
+    // drop is now audible.
+    expect(problems.map(p => p.id)).toEqual(['prob-good']);
+    expect(warn).toHaveBeenCalled();
+    const logged = warn.mock.calls.map(c => c.map(String).join(' ')).join('\n');
+    expect(logged).toContain(badPath);
+    expect(logged).not.toContain(goodPath);
+  });
+
+  it('a missing file stays silent — absence is a normal read outcome', async () => {
+    const storage = createFileSystemHubStorage(dataDir);
+
+    expect(await storage.getProblem('ws-nope', 'prob-nope')).toBeNull();
+    expect(await storage.getWorkspace('ws-nope')).toBeNull();
+    expect(await storage.getAgents()).toEqual([]);
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('getProposal warns when the file exists but is unreadable', async () => {
+    const storage = createFileSystemHubStorage(dataDir);
+    const proposalsDir = join(dataDir, 'hub', 'workspaces', 'ws-1', 'proposals');
+    await mkdir(proposalsDir, { recursive: true });
+    const path = join(proposalsDir, 'prop-1.json');
+    await writeFile(path, 'not json at all', 'utf-8');
+
+    expect(await storage.getProposal('ws-1', 'prop-1')).toBeNull();
+    const logged = warn.mock.calls.map(c => c.map(String).join(' ')).join('\n');
+    expect(logged).toContain(path);
+  });
+
+  // An unreadable-for-any-other-reason record. EISDIR is used rather than a
+  // chmod-based EACCES because chmod is a no-op for root, which would make
+  // this pass locally and vanish silently in a root container.
+  it('an unreadable (non-corrupt) record warns rather than reporting absence', async () => {
+    const storage = createFileSystemHubStorage(dataDir);
+    const path = join(dataDir, 'hub', 'workspaces', 'ws-odd', 'workspace.json');
+    await mkdir(path, { recursive: true });
+
+    expect(await storage.getWorkspace('ws-odd')).toBeNull();
+    const logged = warn.mock.calls.map(c => c.map(String).join(' ')).join('\n');
+    expect(logged).toContain(path);
+  });
+});
+
+// The directory-level twin of the above. A record that cannot be read drops
+// one item; a directory that cannot be listed drops the entire collection, so
+// list_problems returning [] can mean "none" or "all of them, invisibly".
+describe('Hub Storage — Unlistable Directories Are Reported, Not Swallowed', () => {
+  let dataDir: string;
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), 'hub-unlistable-'));
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(async () => {
+    warn.mockRestore();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  // A plain file where a directory belongs makes readdir fail ENOTDIR on
+  // every platform and for every user, unlike a chmod-based EACCES.
+  async function blockDir(...segments: string[]): Promise<string> {
+    const path = join(dataDir, 'hub', ...segments);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, 'not a directory', 'utf-8');
+    return path;
+  }
+
+  const logged = () => warn.mock.calls.map(c => c.map(String).join(' ')).join('\n');
+
+  it('listProblems warns when the problems directory cannot be listed', async () => {
+    const path = await blockDir('workspaces', 'ws-1', 'problems');
+    const storage = createFileSystemHubStorage(dataDir);
+
+    expect(await storage.listProblems('ws-1')).toEqual([]);
+    expect(logged()).toContain(path);
+  });
+
+  it('listProposals warns when the proposals directory cannot be listed', async () => {
+    const path = await blockDir('workspaces', 'ws-1', 'proposals');
+    const storage = createFileSystemHubStorage(dataDir);
+
+    expect(await storage.listProposals('ws-1')).toEqual([]);
+    expect(logged()).toContain(path);
+  });
+
+  it('listConsensusMarkers warns when the consensus directory cannot be listed', async () => {
+    const path = await blockDir('workspaces', 'ws-1', 'consensus');
+    const storage = createFileSystemHubStorage(dataDir);
+
+    expect(await storage.listConsensusMarkers('ws-1')).toEqual([]);
+    expect(logged()).toContain(path);
+  });
+
+  it('listWorkspaces warns when the workspaces root cannot be listed', async () => {
+    const path = await blockDir('workspaces');
+    const storage = createFileSystemHubStorage(dataDir);
+
+    expect(await storage.listWorkspaces()).toEqual([]);
+    expect(logged()).toContain(path);
+  });
+
+  it('an absent directory stays silent — a first run has none of these', async () => {
+    const storage = createFileSystemHubStorage(dataDir);
+
+    expect(await storage.listProblems('ws-none')).toEqual([]);
+    expect(await storage.listProposals('ws-none')).toEqual([]);
+    expect(await storage.listConsensusMarkers('ws-none')).toEqual([]);
+    expect(await storage.listWorkspaces()).toEqual([]);
+
+    expect(warn).not.toHaveBeenCalled();
   });
 });

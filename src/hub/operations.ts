@@ -5,6 +5,8 @@
  * Includes hub vocabulary for agent onboarding.
  */
 
+import { REVIEW_VERDICTS } from './hub-types.js';
+
 export interface OperationDefinition {
   name: string;
   title: string;
@@ -427,7 +429,7 @@ const PROPOSAL_OPERATIONS: OperationDefinition[] = [
   {
     name: "review_proposal",
     title: "Review Proposal",
-    description: "Review a proposal with approve/request-changes/reject verdict.",
+    description: "Review a proposal with approve/request-changes/comment verdict.",
     category: "proposals",
     stage: 2,
     inputSchema: {
@@ -435,7 +437,8 @@ const PROPOSAL_OPERATIONS: OperationDefinition[] = [
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         proposalId: { type: "string", description: "Proposal ID to review" },
-        verdict: { type: "string", enum: ["approve", "request-changes", "reject"], description: "Review verdict" },
+        // Derived, not restated — a hand-written copy is what drifted before.
+        verdict: { type: "string", enum: [...REVIEW_VERDICTS], description: "Review verdict" },
         reasoning: { type: "string", description: "Explanation of the verdict" },
         thoughtRefs: { type: "array", items: { type: "number" }, description: "Thought numbers supporting the review" },
       },
@@ -479,7 +482,7 @@ const PROPOSAL_OPERATIONS: OperationDefinition[] = [
       type: "object",
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
-        status: { type: "string", enum: ["open", "reviewing", "merged", "rejected"], description: "Filter by proposal status" },
+        status: { type: "string", enum: ["open", "reviewing", "approved", "merged", "rejected"], description: "Filter by proposal status" },
       },
       required: ["workspaceId"],
     },

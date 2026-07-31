@@ -10,6 +10,7 @@ import * as vm from "node:vm";
 import { z } from "zod";
 import type { SearchCatalog } from "./search-index.js";
 import type { CodeModeResult } from "./types.js";
+import { isBareStatementSubmission } from "./submission-contract.js";
 
 const MAX_LOGS = 100;
 const TIMEOUT_MS = 10_000;
@@ -17,17 +18,28 @@ const MAX_RESULT_BYTES = 24_000;
 
 export const searchToolInputSchema = z.object({
   code: z.string().describe(
-    "JavaScript async arrow function that receives `catalog` and returns filtered results. " +
+    "JavaScript that must evaluate to a function — the executor evaluates this " +
+    "string and calls the result with no arguments, so bare top-level statements " +
+    "do not work. `catalog` is in scope. " +
     "Example: `async () => Object.keys(catalog.operations)` or " +
     "`async () => catalog.prompts.filter(p => p.name.includes('spec'))`"
   ),
 });
+
+/** Guidance appended to, or substituted for, errors caused by a non-function submission. */
+const FUNCTION_CONTRACT_HINT =
+  "your code must evaluate to a function, e.g. `async () => { ... }` " +
+  "(with `catalog` in scope). The submitted code is evaluated as a single " +
+  "expression and the result is called, so bare top-level statements such as " +
+  "`const x = ...; return x;` are not valid.";
 
 export type SearchToolInput = z.infer<typeof searchToolInputSchema>;
 
 export const SEARCH_TOOL = {
   name: "thoughtbox_search",
   description: `Discover Thoughtbox operations, prompts, and resources by writing JavaScript that queries the catalog.
+
+Submission contract — your code must evaluate to a function. The string you send is evaluated as a single expression and the result is called with no arguments, so submit \`async () => { ... }\` (normal JavaScript inside) and not bare top-level statements. Minimal working example: \`async () => Object.keys(catalog.operations)\`.
 
 Sandbox contract — this is a read-only discovery sandbox, not an execution one:
 - \`catalog\` is already parsed and frozen in scope. Return or log from it; do not re-parse anything. (The raw JSON string is also present as \`__catalogJson\`, but you never need it.)
@@ -97,6 +109,7 @@ export class SearchTool {
     // Promise/builtin interactions.
     const context = vm.createContext({
       __catalogJson: JSON.stringify(this.catalog),
+      __contractHint: FUNCTION_CONTRACT_HINT,
       console: cappedConsole,
       setTimeout: globalThis.setTimeout,
       clearTimeout: globalThis.clearTimeout,
@@ -104,12 +117,21 @@ export class SearchTool {
 
     let output: CodeModeResult;
     try {
+      // Bare top-level statements cannot compile inside the expression
+      // wrapper below, so they never reach the typeof guard — catch them here
+      // and report the contract rather than a token from the wrapper.
+      if (isBareStatementSubmission(input.code)) {
+        throw new TypeError(FUNCTION_CONTRACT_HINT);
+      }
+
       // Serialize the result inside the vm to avoid cross-realm object
       // issues where host JSON.stringify silently returns undefined for
       // complex objects created inside the sandbox.
       const script = new vm.Script(`
         const catalog = Object.freeze(JSON.parse(__catalogJson));
-        Promise.resolve((${input.code})()).then(
+        const __submission = (${input.code});
+        if (typeof __submission !== "function") throw new TypeError(__contractHint);
+        Promise.resolve(__submission()).then(
           r => JSON.stringify(r),
           e => { throw e; }
         )

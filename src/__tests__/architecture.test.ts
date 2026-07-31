@@ -25,7 +25,11 @@ function sourceFiles(dir: string): string[] {
   return out;
 }
 
-describe("extraction-boundary architecture", () => {
+// Both guards walk and read every source file. That takes ~175ms alone but
+// contends with the rest of the suite for I/O under full-suite parallelism,
+// where it has exceeded the 5s default. The work is bounded, so a generous
+// timeout removes the flake without hiding a real hang.
+describe("extraction-boundary architecture", { timeout: 30_000 }, () => {
   it("no file imports @supabase", () => {
     const offenders = sourceFiles(SRC).filter((f) =>
       /from\s+["']@supabase/.test(readFileSync(f, "utf8"))

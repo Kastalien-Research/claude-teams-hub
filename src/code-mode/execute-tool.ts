@@ -11,6 +11,7 @@ import { z } from "zod";
 import type { CodeModeResult } from "./types.js";
 import { TB_SDK_TYPES } from "./sdk-types.js";
 import { HUB_SDK_METHODS } from "./hub-sdk-methods.js";
+import { isBareStatementSubmission } from "./submission-contract.js";
 
 import type { ThoughtTool, ThoughtToolInput } from "../thought/tool.js";
 import type { SessionTool, SessionToolInput } from "../sessions/tool.js";
@@ -22,10 +23,19 @@ const MAX_RESULT_BYTES = 24_000;
 
 export const executeToolInputSchema = z.object({
   code: z.string().describe(
-    "JavaScript async arrow function using the `tb` SDK. " +
+    "JavaScript that must evaluate to a function — the executor evaluates this " +
+    "string and calls the result with no arguments, so bare top-level statements " +
+    "do not work. `tb` is in scope. " +
     "Example: `async () => { const s = await tb.session.list(); return s; }`"
   ),
 });
+
+/** Guidance substituted for errors caused by a non-function submission. */
+const FUNCTION_CONTRACT_HINT =
+  "your code must evaluate to a function, e.g. `async () => { ... }` " +
+  "(with `tb` in scope). The submitted code is evaluated as a single " +
+  "expression and the result is called, so bare top-level statements such as " +
+  "`const x = await tb.session.list(); return x;` are not valid.";
 
 export type ExecuteToolInput = z.infer<typeof executeToolInputSchema>;
 
@@ -54,6 +64,8 @@ export interface ExecuteToolDeps {
 export const EXECUTE_TOOL = {
   name: "thoughtbox_execute",
   description: `Run JavaScript using the \`tb\` SDK to chain Thoughtbox operations in a single call.
+
+**Your code must evaluate to a function.** The string you send is evaluated as a single expression and the result is called with no arguments, so submit \`async () => { ... }\` (normal JavaScript inside) and not bare top-level statements. Minimal working example: \`async () => { const s = await tb.session.list(); return s; }\`.
 
 **One state-mutating operation per call.** Submit only one \`tb.thought()\`, or one hub-mutating call (\`tb.hub.register()\`, \`tb.hub.quickJoin()\`, \`tb.hub.createWorkspace()\`, \`tb.hub.transferCoordinator()\`, \`tb.hub.createProblem()\`, \`tb.hub.claimProblem()\`, \`tb.hub.updateProblem()\`, \`tb.hub.createProposal()\`, \`tb.hub.reviewProposal()\`, \`tb.hub.mergeProposal()\`, \`tb.hub.markConsensus()\`, \`tb.hub.endorseConsensus()\`, \`tb.hub.postMessage()\`, etc.), per \`thoughtbox_execute\` invocation. Each response carries guidance (patterns, session state, workspace state) that should inform your next operation. Batching multiple state-mutating calls bypasses this feedback loop and produces lower-quality reasoning. Read-only operations — \`tb.session.*\` and hub reads (\`tb.hub.whoami()\`, \`tb.hub.listWorkspaces()\`, \`tb.hub.listProblems()\`, \`tb.hub.readyProblems()\`, \`tb.hub.blockedProblems()\`, \`tb.hub.listProposals()\`, \`tb.hub.listConsensus()\`, \`tb.hub.readChannel()\`, \`tb.hub.workspaceStatus()\`, \`tb.hub.workspaceDigest()\`) — plus session variables (\`tb.vars.*\` — store intermediate values across execute calls within this MCP session) may be freely chained.
 
@@ -426,6 +438,7 @@ export class ExecuteTool {
     // isolated-vm.
     const context = vm.createContext({
       tb,
+      __contractHint: FUNCTION_CONTRACT_HINT,
       console: cappedConsole,
       setTimeout: globalThis.setTimeout,
       clearTimeout: globalThis.clearTimeout,
@@ -433,11 +446,20 @@ export class ExecuteTool {
 
     let output: CodeModeResult;
     try {
+      // Bare top-level statements cannot compile inside the expression
+      // wrapper below, so they never reach the typeof guard — catch them here
+      // and report the contract rather than a token from the wrapper.
+      if (isBareStatementSubmission(input.code)) {
+        throw new TypeError(FUNCTION_CONTRACT_HINT);
+      }
+
       // Serialize the result inside the vm to avoid cross-realm object
       // issues where host JSON.stringify can silently return undefined
       // for complex objects created inside the sandbox.
       const script = new vm.Script(`
-        Promise.resolve((${input.code})()).then(
+        const __submission = (${input.code});
+        if (typeof __submission !== "function") throw new TypeError(__contractHint);
+        Promise.resolve(__submission()).then(
           r => JSON.stringify(r),
           e => { throw e; }
         )

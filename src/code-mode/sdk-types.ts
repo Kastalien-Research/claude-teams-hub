@@ -114,10 +114,10 @@ interface TB {
     blockedProblems(args: { workspaceId: string }): Promise<unknown>;
     createSubProblem(args: { workspaceId: string; parentId: string; title: string; description: string; agentId?: string }): Promise<unknown>;
     createProposal(args: { workspaceId: string; title: string; description: string; sourceBranch: string; problemId?: string; agentId?: string }): Promise<unknown>;
-    reviewProposal(args: { workspaceId: string; proposalId: string; verdict: "approve" | "request-changes" | "reject"; reasoning: string; thoughtRefs?: number[]; agentId?: string }): Promise<unknown>;
-    /** Coordinator-only; requires at least one approve review. The synthesis thought persists to the workspace main session. */
+    reviewProposal(args: { workspaceId: string; proposalId: string; verdict: "approve" | "request-changes" | "comment"; reasoning: string; thoughtRefs?: number[]; agentId?: string }): Promise<unknown>;
+    /** Coordinator-only; requires at least one approve review — which is also what moves the proposal to "approved". The synthesis thought persists to the workspace main session. */
     mergeProposal(args: { workspaceId: string; proposalId: string; mergeMessage: string; agentId?: string }): Promise<unknown>;
-    listProposals(args: { workspaceId: string; status?: "open" | "reviewing" | "merged" | "rejected" }): Promise<unknown>;
+    listProposals(args: { workspaceId: string; status?: "open" | "reviewing" | "approved" | "merged" | "rejected" }): Promise<unknown>;
     markConsensus(args: { workspaceId: string; name: string; description: string; thoughtRef: number; branchId?: string; agentId?: string }): Promise<unknown>;
     endorseConsensus(args: { workspaceId: string; consensusId: string; agentId?: string }): Promise<unknown>;
     listConsensus(args: { workspaceId: string }): Promise<unknown>;

@@ -12,6 +12,7 @@ import type {
   ConsensusMarker,
   Channel,
 } from '../hub-types.js';
+import { statusAfterReview } from '../hub-types.js';
 import type { ThoughtData } from '../../persistence/types.js';
 
 /**
@@ -104,7 +105,7 @@ export function createInMemoryHubStorage(): HubStorage {
       if (!proposal.reviews.some(r => r.id === review.id)) {
         proposal.reviews.push(review);
       }
-      proposal.status = 'reviewing';
+      proposal.status = statusAfterReview(proposal.reviews);
       proposal.updatedAt = new Date().toISOString();
     },
     async appendEndorsement(workspaceId, markerId, agentId) {
