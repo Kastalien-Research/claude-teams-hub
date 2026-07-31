@@ -82,9 +82,12 @@ interface TB {
 
   /**
    * Multi-agent hub coordination: workspaces, problems, proposals, consensus,
-   * channels. Call register or quickJoin once per session — the returned
-   * agentId is then implicit for every other call. Pass agentId explicitly
-   * only to act as another agent registered in this session.
+   * channels. Call register or quickJoin ONCE, keep the returned agentId, and
+   * pass it as agentId on every other call — identity is a durable record, so
+   * the same agentId works from any connection or session and re-registering
+   * mints a second agent instead of recovering the first. A call with no
+   * agentId acts as the process identity (THOUGHTBOX_AGENT_ID /
+   * THOUGHTBOX_AGENT_NAME) if one is configured, and otherwise fails.
    *
    * These camelCase method names are what you call here; thoughtbox_search
    * lists the same operations under their snake_case wire names and carries
@@ -98,6 +101,8 @@ interface TB {
     whoami(args?: { agentId?: string }): Promise<unknown>;
     createWorkspace(args: { name: string; description: string; agentId?: string }): Promise<unknown>;
     joinWorkspace(args: { workspaceId: string; agentId?: string }): Promise<unknown>;
+    /** Coordinator-only; hands the role to another member. Not needed after a reconnect — coordinator power is durable. */
+    transferCoordinator(args: { workspaceId: string; toAgentId: string; agentId?: string }): Promise<unknown>;
     getProfilePrompt(args: { profile: HubProfile }): Promise<unknown>;
     createProblem(args: { workspaceId: string; title: string; description: string; agentId?: string }): Promise<unknown>;
     claimProblem(args: { workspaceId: string; problemId: string; branchId?: string; agentId?: string }): Promise<unknown>;

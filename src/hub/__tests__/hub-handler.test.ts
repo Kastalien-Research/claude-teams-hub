@@ -11,11 +11,19 @@ describe('Hub Handler — Progressive Disclosure', () => {
     handler = createHubHandler(storage, thoughtStore);
   });
 
-  // T-PD-1: Unregistered agent can only register or list workspaces
+  // T-PD-1: Unregistered agent can only register or list workspaces.
+  // The failure names the missing RECORD, not a missing session registration
+  // (SPEC-HUB-003): identity is resolved per request from storage.
   it('unregistered agent cannot create workspace', async () => {
     await expect(
       handler.handle('unknown-agent', 'create_workspace', { name: 'ws', description: '...' }),
-    ).rejects.toThrow(/Register first/);
+    ).rejects.toThrow(/Unknown agent 'unknown-agent'/);
+  });
+
+  it('a call that names no agent at all reports the explicit-agentId requirement', async () => {
+    await expect(
+      handler.handle(null, 'create_workspace', { name: 'ws', description: '...' }),
+    ).rejects.toThrow(/require an explicit agentId/i);
   });
 
   // T-PD-2: Registered agent without workspace cannot create problems

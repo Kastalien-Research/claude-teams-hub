@@ -16,6 +16,13 @@ export interface AgentIdentity {
   profile?: string; // SPEC-HUB-002: Agent profile name (e.g., 'MANAGER', 'DEBUGGER')
   clientInfo?: string;
   registeredAt: string; // ISO 8601
+  /**
+   * SPEC-HUB-003 c1: the authenticated principal that owns this agent — the
+   * API key id or OAuth subject that created it. Present only in hosted
+   * multi-tenant mode; absent in local fs mode, where the trust boundary is
+   * the machine and identity is assertion-based.
+   */
+  ownerPrincipal?: string;
 }
 
 // =============================================================================
@@ -195,6 +202,7 @@ export type HubOperation =
   // Workspaces
   | 'create_workspace'
   | 'join_workspace'
+  | 'transfer_coordinator'
   | 'list_workspaces'
   | 'workspace_status'
   // Problems
@@ -236,7 +244,13 @@ export type DisclosureStage = 0 | 1 | 2;
 /** Operations available at each disclosure stage */
 export const STAGE_OPERATIONS: Record<DisclosureStage, HubOperation[]> = {
   0: ['register', 'list_workspaces', 'quick_join'],
-  1: ['whoami', 'create_workspace', 'join_workspace', 'get_profile_prompt'],
+  // transfer_coordinator sits at stage 1, with create/join_workspace, because
+  // it needs a durable agent record and a workspaceId — not membership. Its
+  // hosted-mode recovery path (SPEC-HUB-003 c6) is performed BY a non-member:
+  // an agent whose principal owns the workspace creator but who has no
+  // membership yet. Authorization lives in the workspace manager, which
+  // checks coordinator role or owning principal explicitly.
+  1: ['whoami', 'create_workspace', 'join_workspace', 'transfer_coordinator', 'get_profile_prompt'],
   2: [
     'create_problem', 'claim_problem', 'update_problem', 'list_problems',
     'add_dependency', 'remove_dependency', 'ready_problems', 'blocked_problems', 'create_sub_problem',

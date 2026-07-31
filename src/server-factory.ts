@@ -4,7 +4,6 @@ import { z } from "zod";
 import type { HubStorage } from "./hub/hub-types.js";
 import type { HubEvent } from "./hub/hub-handler.js";
 import { createHubToolHandler } from "./hub/hub-tool-handler.js";
-import { SessionIdentityRegistry } from "./hub/session-identity.js";
 import {
   createThoughtStoreAdapter,
   type ThoughtStoreAdapter,
@@ -169,6 +168,11 @@ Workflow: search to discover available operations, then execute code against the
 - \`tb.thought\` / \`tb.session\`: transitional thought + reasoning-session ledger
 - \`tb.vars\`: values carried across execute calls
 
+Hub identity is durable, not per-connection: \`tb.hub.register()\` /
+\`tb.hub.quickJoin()\` return an \`agentId\` — record it and pass it as
+\`agentId\` on every later hub call, including after reconnecting. Registering
+again mints a NEW agent rather than recovering the previous one.
+
 Use \`console.log()\` for debugging — output captured in response logs.`;
 
   // MCP tasks capability (SDK 1.29.0): durable task store when a data
@@ -303,9 +307,11 @@ Use \`console.log()\` for debugging — output captured in response logs.`;
   // via args.hubStorage; the thought store delegates to THIS session's
   // storage so merge_proposal synthesis thoughts persist with the session's
   // real backend.
-  // The HubToolHandler keeps a register-once identity registry keyed by the
-  // session, so agentId is implicit after the first register/quick_join.
-  const sessionIdentities = new SessionIdentityRegistry();
+  // Identity is resolved per request from durable hub storage (SPEC-HUB-003):
+  // a call acts as the agentId it carries, or as the process-level env
+  // identity, and the MCP session takes no part. Nothing session-scoped is
+  // passed in, which is why this wiring needs no change when the transport
+  // drops sessions.
   const hubToolHandler = args.hubStorage
     ? createHubToolHandler({
         hubStorage: args.hubStorage,
@@ -313,14 +319,12 @@ Use \`console.log()\` for debugging — output captured in response logs.`;
         envAgentId: process.env.THOUGHTBOX_AGENT_ID,
         envAgentName: process.env.THOUGHTBOX_AGENT_NAME,
         onEvent: args.onHubEvent,
-        identityRegistry: sessionIdentities,
       })
     : undefined;
-  const hubSessionKey = sessionId ?? "local";
   const hubDispatcher = hubToolHandler
     ? {
         handle: (input: { operation: string; [key: string]: unknown }) =>
-          hubToolHandler.handle(input, hubSessionKey),
+          hubToolHandler.handle(input),
       }
     : undefined;
 

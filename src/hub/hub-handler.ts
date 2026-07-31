@@ -18,6 +18,7 @@ import { createProposalsManager } from './proposals.js';
 import { createConsensusManager } from './consensus.js';
 import { createChannelsManager } from './channels.js';
 import { getProfilePromptContent, isValidProfile } from './profiles-registry.js';
+import { AGENT_ID_GUIDANCE, AGENT_ID_REQUIRED_ERROR } from './identity-resolver.js';
 import type { ThoughtStoreForWorkspace } from './workspace.js';
 
 type ThoughtStore = ThoughtStoreForWorkspace & {
@@ -42,7 +43,29 @@ export interface HubEvent {
 }
 
 export interface HubHandler {
-  handle(agentId: string | null, operation: string, args: Record<string, any>): Promise<unknown>;
+  /**
+   * `agentId` is the identity the request already resolved to (see
+   * identity-resolver.ts) — null only for the identity-minting stage-0
+   * operations. `requestPrincipal` is the authenticated principal of the
+   * request in hosted multi-tenant mode; it is what register/quick_join
+   * stamp onto new records (c1) and what the transfer_coordinator recovery
+   * path checks (c6). Local fs mode leaves it undefined.
+   */
+  handle(
+    agentId: string | null,
+    operation: string,
+    args: Record<string, any>,
+    requestPrincipal?: string,
+  ): Promise<unknown>;
+}
+
+export interface HubHandlerOptions {
+  /**
+   * Hosted multi-tenant deployment: bind new agents to the authenticated
+   * principal and honour the owning-principal transfer path. Local fs mode
+   * (the only mode wired today) leaves this false.
+   */
+  hostedMode?: boolean;
 }
 
 function getDisclosureStage(operation: string): DisclosureStage {
@@ -57,8 +80,10 @@ const WORKSPACE_OPERATIONS = new Set<string>(STAGE_OPERATIONS[2]);
 export function createHubHandler(
   storage: HubStorage,
   thoughtStore: ThoughtStore,
-  onEvent?: (event: HubEvent) => void
+  onEvent?: (event: HubEvent) => void,
+  options?: HubHandlerOptions,
 ): HubHandler {
+  const hostedMode = options?.hostedMode ?? false;
   const identity = createIdentityManager(storage);
   const workspace = createWorkspaceManager(storage, thoughtStore);
   const problems = createProblemsManager(storage, thoughtStore);
@@ -71,13 +96,16 @@ export function createHubHandler(
   }
 
   return {
-    async handle(agentId, operation, args) {
+    async handle(agentId, operation, args, requestPrincipal) {
       const requiredStage = getDisclosureStage(operation);
+      // Principal binding is a hosted-mode concept; in local fs mode the
+      // field never reaches a record even if a caller supplies one (c1).
+      const ownerPrincipal = hostedMode ? requestPrincipal : undefined;
 
       // Stage 0: register, list_workspaces, quick_join — no agent needed
       if (requiredStage === 0) {
         if (operation === 'register') {
-          const reg = await identity.register(args as any);
+          const reg = await identity.register({ ...(args as any), ownerPrincipal });
           emit({
             type: 'agent_registered',
             workspaceId: '*',
@@ -87,7 +115,9 @@ export function createHubHandler(
               ...(args?.profile ? { profile: args.profile } : {}),
             },
           });
-          return reg;
+          // The handle IS the identity now that resolution is per-request, so
+          // the response says what to do with it (SPEC-HUB-003 c5).
+          return { ...reg, guidance: AGENT_ID_GUIDANCE };
         }
         if (operation === 'list_workspaces') {
           return workspace.listWorkspaces();
@@ -102,15 +132,15 @@ export function createHubHandler(
           if (!name) throw new Error('quick_join requires name');
           if (!wsId) throw new Error('quick_join requires workspaceId');
 
-          // A session identity, once established, is never silently replaced.
+          // An identity the caller already holds is never silently replaced.
           // Registering unconditionally here minted an orphan agent under the
           // caller's own name, joined THAT, and returned success describing an
           // agent the caller is not — every later call then failed "Not a
           // member of this workspace" (docs/known-issues.md #1). Same name →
-          // reuse the session identity. A DIFFERENT name is the sanctioned
-          // multi-agent flow (a coordinator minting sub-agents it drives via
-          // explicit agentId): still mint, but say in the result that the
-          // session default is unchanged, so the trap is visible.
+          // reuse the identity this request resolved to. A DIFFERENT name is
+          // the sanctioned multi-agent flow (a coordinator minting sub-agents
+          // it drives via explicit agentId): still mint, but say in the result
+          // which agentId is which, so the trap is visible.
           const existing = agentId ? await identity.getAgent(agentId) : null;
           const reused = existing !== null && existing.name === name;
 
@@ -133,7 +163,7 @@ export function createHubHandler(
 
           const reg = reused
             ? existing
-            : await identity.register({ name, clientInfo, profile });
+            : await identity.register({ name, clientInfo, profile, ownerPrincipal });
           if (!reused) {
             emit({
               type: 'agent_registered',
@@ -161,27 +191,34 @@ export function createHubHandler(
             workspace: joinResult.workspace,
             problems: joinResult.problems,
             proposals: joinResult.proposals,
+            guidance: AGENT_ID_GUIDANCE,
             ...(existing && !reused
               ? {
                   note:
-                    `This MCP session's default identity remains '${existing.name}' ` +
-                    `(${existing.agentId}). To act as '${reg.name}', pass ` +
-                    `agentId: '${reg.agentId}' explicitly on every call; without it, ` +
-                    `calls act as '${existing.name}'.`,
+                    `Registered a NEW agent '${reg.name}' (${reg.agentId}). The identity ` +
+                    `this call resolved to, '${existing.name}' (${existing.agentId}), is ` +
+                    `unchanged and still exists. Every hub call acts as the agentId it ` +
+                    `carries, so pass agentId: '${reg.agentId}' to act as the new agent.`,
                 }
               : {}),
           };
         }
       }
 
-      // Stage 1+: agent must be registered
+      // Stage 1+: the call must name a durable agent. Identity is per-request,
+      // so the failure is "you did not say who you are", not "you have not
+      // registered in this connection" — the caller may well hold an agentId
+      // already (SPEC-HUB-003 c5).
       if (!agentId) {
-        throw new Error("Register first via the hub 'register' operation with a name.");
+        throw new Error(AGENT_ID_REQUIRED_ERROR);
       }
 
       const agent = await identity.getAgent(agentId);
       if (!agent) {
-        throw new Error("Register first via the hub 'register' operation with a name.");
+        throw new Error(
+          `Unknown agent '${agentId}': no durable agent record exists. ` +
+            'Register to mint one, then record and reuse the returned agentId.',
+        );
       }
 
       // Stage 1: registered but may not need workspace
@@ -214,6 +251,18 @@ export function createHubHandler(
             },
           });
           return joinResult;
+        }
+        if (operation === 'transfer_coordinator') {
+          const { workspaceId, toAgentId } = args as {
+            workspaceId?: string; toAgentId?: string;
+          };
+          if (!workspaceId) throw new Error('transfer_coordinator requires workspaceId');
+          if (!toAgentId) throw new Error('transfer_coordinator requires toAgentId');
+          return workspace.transferCoordinator(
+            agentId,
+            { workspaceId, toAgentId },
+            { hostedMode, requestPrincipal },
+          );
         }
         if (operation === 'get_profile_prompt') {
           const profileName = args.profile as string | undefined;

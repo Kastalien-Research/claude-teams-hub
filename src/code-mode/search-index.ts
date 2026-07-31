@@ -123,14 +123,33 @@ export const CATALOG_ANNOTATIONS: Record<string, CatalogAnnotation> = {
     ],
     relatedOps: ["session.session_resume", "session.session_query_thoughts"],
   },
+  "hub.register": {
+    whenToUse:
+      "Minting a NEW agent identity. Every call mints another one, so call it once and keep the agentId: hub identity is a durable record, and the returned agentId is the handle you pass as `agentId` on every later hub call — from this connection or any other. A process-level identity can be configured instead with THOUGHTBOX_AGENT_ID + THOUGHTBOX_AGENT_NAME, which then applies to calls that pass no agentId.",
+    commonMistakes: [
+      "re-registering to 'get back' an existing agent after a reconnect — that mints a second agent with no workspace memberships; reuse the original agentId instead",
+      "omitting agentId on later calls and expecting the last registration to be assumed — mutations without an agentId fail unless a process-level env identity is configured",
+    ],
+    relatedOps: ["hub.quick_join", "hub.whoami", "hub.join_workspace"],
+  },
   "hub.quick_join": {
     whenToUse:
-      "Onboarding into a workspace. Preferred over register + join_workspace: it registers the agent and joins the workspace in one call, and the returned agentId is implicit for every later hub call in this session. Requires name and workspaceId.",
+      "Onboarding into a workspace. Preferred over register + join_workspace: it registers the agent and joins the workspace in one call. Record the returned agentId and pass it on every later call. Pass your existing agentId to re-join or to join a second workspace as yourself; omitting it mints a new agent. Requires name and workspaceId.",
     commonMistakes: [
       "calling register first and then quick_join — quick_join already registers",
       "omitting workspaceId (use list_workspaces to find one, or create_workspace first)",
+      "quick_joining again after a reconnect without passing your agentId — that mints a second agent under the same name",
     ],
     relatedOps: ["hub.list_workspaces", "hub.create_workspace", "hub.whoami"],
+  },
+  "hub.transfer_coordinator": {
+    whenToUse:
+      "Handing coordinatorship to another member deliberately — before going offline for good, or when the coordinating agent is being retired. Coordinator power is durable and survives disconnection, so this is not needed to recover from a dropped connection: reconnect and pass the same agentId.",
+    commonMistakes: [
+      "reaching for it after a disconnect — the original coordinator keeps merge_proposal as long as it passes its agentId",
+      "naming an agent that has not joined the workspace (it must already be a member)",
+    ],
+    relatedOps: ["hub.merge_proposal", "hub.workspace_status", "hub.join_workspace"],
   },
   "hub.add_dependency": {
     whenToUse:

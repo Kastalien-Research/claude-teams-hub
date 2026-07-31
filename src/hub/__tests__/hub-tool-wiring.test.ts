@@ -47,10 +47,11 @@ describe('Hub Tool Wiring', () => {
       description: 'test',
     });
 
-    // Should fail because no agent is registered (no env vars set)
+    // No agentId on the call and no env identity configured: the call cannot
+    // say who it is (SPEC-HUB-003 c5).
     expect(result.isError).toBe(true);
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.error).toContain('Register first');
+    expect(parsed.error).toContain('require an explicit agentId');
   });
 
   it('T-HTW-4: handle returns correct data for getTask-style operations', async () => {
@@ -60,8 +61,11 @@ describe('Hub Tool Wiring', () => {
     const regResult = await handler.handle({ operation: 'register', name: 'bob' });
     const regData = JSON.parse(regResult.content[0].text);
 
-    // Whoami
-    const whoamiResult = await handler.handle({ operation: 'whoami' });
+    // Whoami, acting as the agent register handed back
+    const whoamiResult = await handler.handle({
+      operation: 'whoami',
+      agentId: regData.agentId,
+    });
     const whoamiData = JSON.parse(whoamiResult.content[0].text);
     expect(whoamiData.agentId).toBe(regData.agentId);
   });
@@ -107,7 +111,7 @@ describe('Hub Tool Wiring', () => {
 
     expect(result.isError).toBe(true);
     const data = JSON.parse(result.content[0].text);
-    expect(data.error).toContain('Register first');
+    expect(data.error).toContain('require an explicit agentId');
   });
 
   it('T-HTW-8: onEvent callback is wired through', async () => {
@@ -115,9 +119,11 @@ describe('Hub Tool Wiring', () => {
     const handler = createHubToolHandler({ hubStorage, thoughtStore, onEvent });
 
     // Register + create workspace + create problem
-    await handler.handle({ operation: 'register', name: 'dave' });
+    const regResult = await handler.handle({ operation: 'register', name: 'dave' });
+    const agentId = JSON.parse(regResult.content[0].text).agentId;
     const wsResult = await handler.handle({
       operation: 'create_workspace',
+      agentId,
       name: 'ws',
       description: 'test',
     });
@@ -125,6 +131,7 @@ describe('Hub Tool Wiring', () => {
 
     await handler.handle({
       operation: 'create_problem',
+      agentId,
       workspaceId: wsData.workspaceId,
       title: 'P1',
       description: 'desc',
@@ -148,7 +155,10 @@ describe('Hub Tool Wiring', () => {
     expect(data.name).toBe('Named Agent');
   });
 
-  describe('Connection-scoped identity registry', () => {
+  // SPEC-HUB-003: identity is a durable record addressed by agentId, not a
+  // connection-scoped registration. These cases pin what an explicit agentId
+  // buys and what omitting it costs.
+  describe('Durable identity addressed by agentId', () => {
     it('T-HTW-11: two agents register in same session, each keeps own identity', async () => {
       const handler = createHubToolHandler({ hubStorage, thoughtStore });
       const sessionId = 'shared-session';
@@ -184,7 +194,7 @@ describe('Hub Tool Wiring', () => {
       expect(JSON.parse(whoamiB.content[0].text).agentId).toBe(agentB.agentId);
     });
 
-    it('T-HTW-12: unregistered agentId is rejected', async () => {
+    it('T-HTW-12: an agentId with no durable record is rejected as unknown', async () => {
       const handler = createHubToolHandler({ hubStorage, thoughtStore });
       const sessionId = 'shared-session';
 
@@ -200,31 +210,37 @@ describe('Hub Tool Wiring', () => {
 
       expect(result.isError).toBe(true);
       const data = JSON.parse(result.content[0].text);
-      expect(data.error).toContain('not registered in this session');
+      expect(data.error).toContain("Unknown agent 'spoofed-id'");
     });
 
-    it('T-HTW-13: first register sets session default, omitting agentId uses it', async () => {
+    it('T-HTW-13: register creates no implicit default — both agents need their agentId', async () => {
       const handler = createHubToolHandler({ hubStorage, thoughtStore });
       const sessionId = 'shared-session';
 
-      const regA = await handler.handle(
-        { operation: 'register', name: 'first-agent' },
-        sessionId
+      const agentA = JSON.parse(
+        (await handler.handle({ operation: 'register', name: 'first-agent' }, sessionId))
+          .content[0].text,
       );
-      const agentA = JSON.parse(regA.content[0].text);
-
-      // Second register should NOT change the default
-      await handler.handle(
-        { operation: 'register', name: 'second-agent' },
-        sessionId
+      const agentB = JSON.parse(
+        (await handler.handle({ operation: 'register', name: 'second-agent' }, sessionId))
+          .content[0].text,
       );
 
-      // Calling without agentId uses the first-registered default
-      const whoami = await handler.handle(
-        { operation: 'whoami' },
-        sessionId
+      // Neither registration becomes an implicit identity for the connection.
+      const implicit = await handler.handle({ operation: 'whoami' }, sessionId);
+      expect(implicit.isError).toBe(true);
+      expect(JSON.parse(implicit.content[0].text).error).toContain(
+        'require an explicit agentId',
       );
-      expect(JSON.parse(whoami.content[0].text).agentId).toBe(agentA.agentId);
+
+      // Both remain fully usable — the first registration is not privileged.
+      for (const agent of [agentA, agentB]) {
+        const who = await handler.handle(
+          { operation: 'whoami', agentId: agent.agentId },
+          sessionId,
+        );
+        expect(JSON.parse(who.content[0].text).name).toBe(agent.name);
+      }
     });
 
     it('T-HTW-14: quick_join registers into identity registry', async () => {
@@ -329,10 +345,12 @@ describe('Hub Tool Wiring', () => {
     // Register
     const regResult = await handler.handle({ operation: 'register', name: 'eve' });
     const reg = JSON.parse(regResult.content[0].text);
+    const agentId = reg.agentId;
 
     // Create workspace
     const wsResult = await handler.handle({
       operation: 'create_workspace',
+      agentId,
       name: 'research',
       description: 'Research workspace',
     });
@@ -348,6 +366,7 @@ describe('Hub Tool Wiring', () => {
     // Create problem
     const probResult = await handler.handle({
       operation: 'create_problem',
+      agentId,
       workspaceId: ws.workspaceId,
       title: 'Bug fix',
       description: 'Fix a bug',

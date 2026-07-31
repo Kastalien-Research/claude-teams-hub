@@ -81,6 +81,7 @@ describe('Wiring Integration', () => {
 
     const wsResult = await handler.handle({
       operation: 'create_workspace',
+      agentId: reg.agentId,
       name: 'ws',
       description: 'test',
     });
@@ -89,6 +90,7 @@ describe('Wiring Integration', () => {
 
     const probResult = await handler.handle({
       operation: 'create_problem',
+      agentId: reg.agentId,
       workspaceId: ws.workspaceId,
       title: 'P1',
       description: 'desc',
@@ -101,9 +103,11 @@ describe('Wiring Integration', () => {
   it('T-WI-3: channel readable after problem creation and messaging', async () => {
     const handler = createHubToolHandler({ hubStorage, thoughtStore });
 
-    await handler.handle({ operation: 'register', name: 'carol' });
+    const regResult = await handler.handle({ operation: 'register', name: 'carol' });
+    const agentId = JSON.parse(regResult.content[0].text).agentId;
     const wsResult = await handler.handle({
       operation: 'create_workspace',
+      agentId,
       name: 'ws',
       description: 'test',
     });
@@ -111,6 +115,7 @@ describe('Wiring Integration', () => {
 
     const probResult = await handler.handle({
       operation: 'create_problem',
+      agentId,
       workspaceId: ws.workspaceId,
       title: 'Task',
       description: 'Do stuff',
@@ -119,12 +124,14 @@ describe('Wiring Integration', () => {
 
     await handler.handle({
       operation: 'post_message',
+      agentId,
       workspaceId: ws.workspaceId,
       problemId: prob.problemId,
       content: 'msg1',
     });
     await handler.handle({
       operation: 'post_message',
+      agentId,
       workspaceId: ws.workspaceId,
       problemId: prob.problemId,
       content: 'msg2',
@@ -145,7 +152,7 @@ describe('Wiring Integration', () => {
       onEvent: (event) => events.push(event),
     });
 
-    // Coordinator registers (becomes session default)
+    // Coordinator registers; its agentId travels on every call it makes
     const coordResult = await handler.handle(
       { operation: 'register', name: 'coordinator' },
       sessionId
@@ -161,9 +168,14 @@ describe('Wiring Integration', () => {
 
     expect(coord.agentId).not.toBe(auditor.agentId);
 
-    // Coordinator creates workspace (uses default identity)
+    // Coordinator creates workspace, acting as itself
     const wsResult = await handler.handle(
-      { operation: 'create_workspace', name: 'review-ws', description: 'Review workspace' },
+      {
+        operation: 'create_workspace',
+        agentId: coord.agentId,
+        name: 'review-ws',
+        description: 'Review workspace',
+      },
       sessionId
     );
     const ws = JSON.parse(wsResult.content[0].text);
@@ -264,7 +276,12 @@ describe('Wiring Integration', () => {
     const coord = JSON.parse(coordResult.content[0].text);
 
     const wsResult = await handler.handle(
-      { operation: 'create_workspace', name: 'collab-ws', description: 'Collaboration workspace' },
+      {
+        operation: 'create_workspace',
+        agentId: coord.agentId,
+        name: 'collab-ws',
+        description: 'Collaboration workspace',
+      },
       sessionId
     );
     const ws = JSON.parse(wsResult.content[0].text);
@@ -323,9 +340,10 @@ describe('Wiring Integration', () => {
     }) as any;
     expect(prob.problemId).toBeDefined();
 
-    // Progressive disclosure still works
+    // Progressive disclosure still works; an agentId with no durable record
+    // fails as unknown rather than as unregistered-in-session.
     await expect(
       handler.handle('unknown', 'create_workspace', { name: 'x', description: 'y' })
-    ).rejects.toThrow(/Register first/);
+    ).rejects.toThrow(/Unknown agent 'unknown'/);
   });
 });
