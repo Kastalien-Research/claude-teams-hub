@@ -12,6 +12,8 @@ import type {
   Review,
   ReviewVerdict,
 } from './hub-types.js';
+import { proposalHasApproval, statusAfterReview } from './hub-types.js';
+import { clearCurrentWorkOn } from './current-work.js';
 import type { ThoughtData } from '../persistence/types.js';
 
 export interface ThoughtStoreForProposals {
@@ -28,7 +30,7 @@ export interface ProposalsManager {
   reviewProposal(
     agentId: string,
     args: { workspaceId: string; proposalId: string; verdict: ReviewVerdict; reasoning: string; thoughtRefs?: number[] },
-  ): Promise<{ review: Review; proposalStatus: string }>;
+  ): Promise<{ review: Review; proposalStatus: ProposalStatus }>;
 
   mergeProposal(
     agentId: string,
@@ -87,11 +89,17 @@ export function createProposalsManager(
         createdAt: new Date().toISOString(),
       };
 
-      // Append-safe: the storage layer persists the review as its own
-      // record and transitions status to 'reviewing'; concurrent reviews
-      // from other server instances are never lost (SPEC-V1-INITIATIVE:c11).
+      // Append-safe: the storage layer persists the review as its own record
+      // and re-derives status from the merge gate; concurrent reviews from
+      // other server instances are never lost (SPEC-V1-INITIATIVE:c11).
       await storage.appendReview(workspaceId, proposalId, review);
-      return { review, proposalStatus: 'reviewing' };
+
+      // Read back rather than predicting. Concurrent reviewers can land
+      // between the append and this read, and the caller needs the status the
+      // next merge attempt will actually see.
+      const updated = await storage.getProposal(workspaceId, proposalId);
+      const proposalStatus = updated?.status ?? statusAfterReview([...proposal.reviews, review]);
+      return { review, proposalStatus };
     },
 
     async mergeProposal(agentId, { workspaceId, proposalId, mergeMessage }) {
@@ -110,8 +118,7 @@ export function createProposalsManager(
       }
 
       // Verify at least one approval
-      const hasApproval = proposal.reviews.some(r => r.verdict === 'approve');
-      if (!hasApproval) throw new Error('Proposal has no approvals');
+      if (!proposalHasApproval(proposal.reviews)) throw new Error('Proposal has no approvals');
 
       // Create merge thought on main chain
       const currentCount = await thoughtStore.getThoughtCount(workspace.mainSessionId);
@@ -147,6 +154,9 @@ export function createProposalsManager(
           problem.resolution = mergeMessage;
           problem.updatedAt = new Date().toISOString();
           await storage.saveProblem(problem);
+          // Auto-resolution is still a resolution: the assignee stops working
+          // on it here, so the roster has to stop saying they are.
+          await clearCurrentWorkOn(storage, workspaceId, proposal.problemId);
         }
       }
 

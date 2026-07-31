@@ -77,7 +77,10 @@ export interface Comment {
 // 1.5 Proposal
 // =============================================================================
 
-export type ProposalStatus = 'open' | 'reviewing' | 'merged' | 'rejected';
+export type ProposalStatus = 'open' | 'reviewing' | 'approved' | 'merged' | 'rejected';
+
+/** Proposal statuses that are still awaiting a merge decision. */
+export const PENDING_PROPOSAL_STATUSES: ProposalStatus[] = ['open', 'reviewing', 'approved'];
 
 export interface Proposal {
   id: string;
@@ -98,7 +101,20 @@ export interface Proposal {
 // 1.6 Review
 // =============================================================================
 
-export type ReviewVerdict = 'approve' | 'request-changes' | 'comment';
+/**
+ * The review verdicts, as a value. Everything that publishes or validates the
+ * vocabulary derives from this array rather than restating it: the catalog
+ * schema and the tb SDK declaration both used to carry a hand-written list,
+ * and both drifted to advertise a 'reject' that never existed while hiding
+ * 'comment', which always did.
+ */
+export const REVIEW_VERDICTS = ['approve', 'request-changes', 'comment'] as const;
+
+export type ReviewVerdict = (typeof REVIEW_VERDICTS)[number];
+
+export function isReviewVerdict(value: unknown): value is ReviewVerdict {
+  return typeof value === 'string' && (REVIEW_VERDICTS as readonly string[]).includes(value);
+}
 
 export interface Review {
   id: string;
@@ -108,6 +124,26 @@ export interface Review {
   reasoning: string;
   thoughtRefs?: number[];
   createdAt: string;
+}
+
+/**
+ * The gate `mergeProposal` enforces: at least one 'approve' review. It is
+ * deliberately the *only* definition of that gate — proposal status is
+ * derived from it rather than tracked alongside it, so 'approved' can never
+ * disagree with whether a merge will actually succeed.
+ */
+export function proposalHasApproval(reviews: Review[]): boolean {
+  return reviews.some(r => r.verdict === 'approve');
+}
+
+/**
+ * Status a not-yet-merged proposal takes once `reviews` are recorded. Note
+ * that a later 'request-changes' does not undo an approval, because the merge
+ * gate does not either; reporting otherwise would put the status back to
+ * contradicting the operation it describes.
+ */
+export function statusAfterReview(reviews: Review[]): ProposalStatus {
+  return proposalHasApproval(reviews) ? 'approved' : 'reviewing';
 }
 
 // =============================================================================
@@ -246,9 +282,10 @@ export interface HubStorage {
   listProposals(workspaceId: string): Promise<Proposal[]>;
 
   /**
-   * Appends a review to a proposal and transitions its status to
-   * 'reviewing'. Concurrency-safe: concurrent appends from different
-   * writers must all be retained.
+   * Appends a review to a proposal and re-derives its status from the merge
+   * gate via `statusAfterReview` — 'approved' once some review approves,
+   * 'reviewing' otherwise. Concurrency-safe: concurrent appends from
+   * different writers must all be retained.
    */
   appendReview(workspaceId: string, proposalId: string, review: Review): Promise<void>;
 

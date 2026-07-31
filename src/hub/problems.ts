@@ -6,6 +6,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { HubStorage, Problem, ProblemStatus, Channel, Comment } from './hub-types.js';
+import { clearCurrentWorkOn, isTerminalProblemStatus } from './current-work.js';
 
 export interface ThoughtStoreForProblems {
   getThoughtCount(sessionId: string): Promise<number>;
@@ -155,6 +156,10 @@ export function createProblemsManager(
 
       problem.updatedAt = new Date().toISOString();
       await storage.saveProblem(problem);
+
+      if (isTerminalProblemStatus(problem.status)) {
+        await clearCurrentWorkOn(storage, workspaceId, problemId);
+      }
 
       return { problem };
     },

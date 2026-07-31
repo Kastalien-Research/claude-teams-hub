@@ -75,7 +75,9 @@ describe('Proposals', () => {
   });
 
   // T-PP-2: Review proposal — approve
-  it('review proposal with approve sets reviewing status', async () => {
+  // Status is derived from the merge gate, so an approve that makes the
+  // proposal mergeable must say so rather than reporting 'reviewing'.
+  it('review proposal with approve sets approved status', async () => {
     const { proposalId } = await proposals.createProposal(bobId, {
       workspaceId, title: 'Redis', description: '...', sourceBranch: 'caching-analysis', problemId,
     });
@@ -86,7 +88,11 @@ describe('Proposals', () => {
 
     expect(result.review.verdict).toBe('approve');
     expect(result.review.reviewerId).toBe(aliceId);
-    expect(result.proposalStatus).toBe('reviewing');
+    expect(result.proposalStatus).toBe('approved');
+
+    // The reported status is the persisted status, not a hardcoded string.
+    const persisted = await storage.getProposal(workspaceId, proposalId);
+    expect(persisted!.status).toBe('approved');
   });
 
   // T-PP-3: Review proposal — request changes
@@ -101,6 +107,81 @@ describe('Proposals', () => {
 
     expect(result.review.verdict).toBe('request-changes');
     expect(result.proposalStatus).toBe('reviewing');
+
+    const persisted = await storage.getProposal(workspaceId, proposalId);
+    expect(persisted!.status).toBe('reviewing');
+  });
+
+  // A 'comment' verdict carries no approval, so it cannot make a proposal
+  // mergeable and must not advance it past 'reviewing'.
+  it('review proposal with comment leaves it in reviewing', async () => {
+    const { proposalId } = await proposals.createProposal(bobId, {
+      workspaceId, title: 'Redis', description: '...', sourceBranch: 'caching-analysis', problemId,
+    });
+
+    const result = await proposals.reviewProposal(aliceId, {
+      workspaceId, proposalId, verdict: 'comment', reasoning: 'Just noting a thing',
+    });
+
+    expect(result.proposalStatus).toBe('reviewing');
+    await expect(
+      proposals.mergeProposal(aliceId, { workspaceId, proposalId, mergeMessage: '...' }),
+    ).rejects.toThrow('Proposal has no approvals');
+  });
+
+  // The gate mergeProposal actually enforces is "at least one approve" — it
+  // does not look at later request-changes reviews. Status has to report that
+  // same gate, or it goes back to lying about what merge will do.
+  it('approved status tracks the merge gate, not review recency', async () => {
+    const carol = await identity.register({ name: 'carol' });
+    await workspace.joinWorkspace(carol.agentId, { workspaceId });
+
+    const { proposalId } = await proposals.createProposal(bobId, {
+      workspaceId, title: 'Redis', description: '...', sourceBranch: 'caching-analysis', problemId,
+    });
+
+    await proposals.reviewProposal(aliceId, {
+      workspaceId, proposalId, verdict: 'approve', reasoning: 'Good',
+    });
+    const after = await proposals.reviewProposal(carol.agentId, {
+      workspaceId, proposalId, verdict: 'request-changes', reasoning: 'One nit',
+    });
+
+    expect(after.proposalStatus).toBe('approved');
+    // ...and merge does in fact still succeed, which is what makes that honest.
+    const merged = await proposals.mergeProposal(aliceId, {
+      workspaceId, proposalId, mergeMessage: 'Accepted',
+    });
+    expect(merged.proposal.status).toBe('merged');
+  });
+
+  it('merge succeeds from approved status', async () => {
+    const { proposalId } = await proposals.createProposal(bobId, {
+      workspaceId, title: 'Redis', description: '...', sourceBranch: 'caching-analysis', problemId,
+    });
+    await proposals.reviewProposal(aliceId, {
+      workspaceId, proposalId, verdict: 'approve', reasoning: 'Good',
+    });
+    expect((await storage.getProposal(workspaceId, proposalId))!.status).toBe('approved');
+
+    const result = await proposals.mergeProposal(aliceId, {
+      workspaceId, proposalId, mergeMessage: 'Accepted',
+    });
+    expect(result.proposal.status).toBe('merged');
+  });
+
+  // 'approved' is still a live proposal: anything that counts what is
+  // outstanding has to include it or the count silently drops approvals.
+  it('an approved proposal still counts as open in workspace status', async () => {
+    const { proposalId } = await proposals.createProposal(bobId, {
+      workspaceId, title: 'Redis', description: '...', sourceBranch: 'caching-analysis', problemId,
+    });
+    await proposals.reviewProposal(aliceId, {
+      workspaceId, proposalId, verdict: 'approve', reasoning: 'Good',
+    });
+
+    const status = await workspace.workspaceStatus({ workspaceId });
+    expect(status.openProposals).toBe(1);
   });
 
   // T-PP-4: Self-review is rejected
@@ -141,6 +222,52 @@ describe('Proposals', () => {
     // Linked problem should be resolved
     const problem = await storage.getProblem(workspaceId, problemId);
     expect(problem!.status).toBe('resolved');
+  });
+
+  // claimProblem sets currentWork; nothing used to unset it. After a merge
+  // auto-resolves the linked problem the assignee reads as still working on
+  // it, so every roster view points teammates at finished work.
+  it('merge clears currentWork for the agent assigned to the resolved problem', async () => {
+    const before = await storage.getWorkspace(workspaceId);
+    expect(before!.agents.find(a => a.agentId === bobId)!.currentWork).toBe(problemId);
+
+    const { proposalId } = await proposals.createProposal(bobId, {
+      workspaceId, title: 'Redis', description: '...', sourceBranch: 'caching-analysis', problemId,
+    });
+    await proposals.reviewProposal(aliceId, {
+      workspaceId, proposalId, verdict: 'approve', reasoning: 'Good',
+    });
+    await proposals.mergeProposal(aliceId, {
+      workspaceId, proposalId, mergeMessage: 'Accepted',
+    });
+
+    const after = await storage.getWorkspace(workspaceId);
+    expect(after!.agents.find(a => a.agentId === bobId)!.currentWork).toBeUndefined();
+    // Alice was never on this problem, so her slot is untouched.
+    expect(after!.agents.find(a => a.agentId === aliceId)!.currentWork).toBeUndefined();
+  });
+
+  it('merge leaves currentWork alone for agents on other problems', async () => {
+    const other = await problems.createProblem(aliceId, {
+      workspaceId, title: 'Unrelated', description: '...',
+    });
+    await problems.claimProblem(aliceId, {
+      workspaceId, problemId: other.problemId, branchId: 'unrelated',
+    });
+
+    const { proposalId } = await proposals.createProposal(bobId, {
+      workspaceId, title: 'Redis', description: '...', sourceBranch: 'caching-analysis', problemId,
+    });
+    await proposals.reviewProposal(aliceId, {
+      workspaceId, proposalId, verdict: 'approve', reasoning: 'Good',
+    });
+    await proposals.mergeProposal(aliceId, {
+      workspaceId, proposalId, mergeMessage: 'Accepted',
+    });
+
+    const after = await storage.getWorkspace(workspaceId);
+    expect(after!.agents.find(a => a.agentId === bobId)!.currentWork).toBeUndefined();
+    expect(after!.agents.find(a => a.agentId === aliceId)!.currentWork).toBe(other.problemId);
   });
 
   // T-PP-6: Merge without approval fails

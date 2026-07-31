@@ -23,6 +23,7 @@ import { SEARCH_TOOL } from "../search-tool.js";
 import { HUB_SDK_METHODS, HUB_OPERATION_SDK_CALLS } from "../hub-sdk-methods.js";
 import { TB_SDK_TYPES } from "../sdk-types.js";
 import { HUB_OPERATIONS } from "../../hub/operations.js";
+import { REVIEW_VERDICTS } from "../../hub/hub-types.js";
 import { THOUGHT_TYPE_REQUIRED_FIELDS } from "../../thought/operations.js";
 import { thoughtToolInputSchema } from "../../thought/tool.js";
 import {
@@ -485,5 +486,40 @@ describe("thoughtbox_thought publishes its typed-payload contract", () => {
     for (const field of new Set(Object.values(THOUGHT_TYPE_REQUIRED_FIELDS).flat())) {
       expect(TB_SDK_TYPES).toContain(field);
     }
+  });
+});
+
+// The same invariant the thoughtType enum is held to, applied to review
+// verdicts. It was violated: the catalog and the SDK declaration both offered
+// "reject" — which ReviewVerdict has never had — and both omitted "comment",
+// which it does. hub-handler passed the value straight through, so an agent
+// following the published enum got a Review persisted with an out-of-union
+// verdict that silently behaved like request-changes.
+describe("review verdict vocabulary", () => {
+  const reviewOp = () => {
+    const op = HUB_OPERATIONS.find((o) => o.name === "review_proposal")!;
+    return (op.inputSchema.properties as Record<string, { enum?: string[] }>)["verdict"]!;
+  };
+
+  it("the published verdict enum is exactly the ReviewVerdict union", () => {
+    expect(reviewOp().enum!.slice().sort()).toEqual([...REVIEW_VERDICTS].sort());
+  });
+
+  it("the catalog does not advertise a verdict the union lacks", () => {
+    expect(reviewOp().enum).not.toContain("reject");
+  });
+
+  it("the tb SDK declaration names every verdict and no others", () => {
+    const declared = TB_SDK_TYPES.match(/verdict: ((?:"[a-z-]+"(?: \| )?)+)/)![1]!;
+    const values = declared.split(" | ").map((v) => v.replace(/"/g, ""));
+    expect(values.slice().sort()).toEqual([...REVIEW_VERDICTS].sort());
+  });
+
+  it("the operation description names the verdicts it accepts", () => {
+    const op = HUB_OPERATIONS.find((o) => o.name === "review_proposal")!;
+    for (const verdict of REVIEW_VERDICTS) {
+      expect(op.description).toContain(verdict);
+    }
+    expect(op.description).not.toContain("reject");
   });
 });

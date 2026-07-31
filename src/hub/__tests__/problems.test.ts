@@ -155,6 +155,70 @@ describe('Problems', () => {
     expect(result.problem.comments[0].agentId).toBe(bobId);
   });
 
+  // currentWork is set by claimProblem and has to come back off when the
+  // problem reaches a terminal state — otherwise the roster keeps pointing at
+  // work nobody is doing.
+  it('update_problem to resolved clears the assignee currentWork', async () => {
+    const { problemId } = await problems.createProblem(aliceId, {
+      workspaceId, title: 'Analyze caching', description: '...',
+    });
+    await problems.claimProblem(bobId, { workspaceId, problemId, branchId: 'b1' });
+    expect(
+      (await storage.getWorkspace(workspaceId))!.agents.find(a => a.agentId === bobId)!.currentWork,
+    ).toBe(problemId);
+
+    await problems.updateProblem(bobId, {
+      workspaceId, problemId, status: 'resolved', resolution: 'done',
+    });
+
+    expect(
+      (await storage.getWorkspace(workspaceId))!.agents.find(a => a.agentId === bobId)!.currentWork,
+    ).toBeUndefined();
+  });
+
+  it('update_problem to closed clears the assignee currentWork', async () => {
+    const { problemId } = await problems.createProblem(aliceId, {
+      workspaceId, title: 'Analyze caching', description: '...',
+    });
+    await problems.claimProblem(bobId, { workspaceId, problemId, branchId: 'b1' });
+
+    await problems.updateProblem(aliceId, { workspaceId, problemId, status: 'closed' });
+
+    expect(
+      (await storage.getWorkspace(workspaceId))!.agents.find(a => a.agentId === bobId)!.currentWork,
+    ).toBeUndefined();
+  });
+
+  it('a non-terminal update_problem leaves currentWork in place', async () => {
+    const { problemId } = await problems.createProblem(aliceId, {
+      workspaceId, title: 'Analyze caching', description: '...',
+    });
+    await problems.claimProblem(bobId, { workspaceId, problemId, branchId: 'b1' });
+
+    await problems.updateProblem(bobId, {
+      workspaceId, problemId, comment: 'still going',
+    });
+
+    expect(
+      (await storage.getWorkspace(workspaceId))!.agents.find(a => a.agentId === bobId)!.currentWork,
+    ).toBe(problemId);
+  });
+
+  it('resolving one problem does not disturb an agent working on another', async () => {
+    const first = await problems.createProblem(aliceId, { workspaceId, title: 'P1', description: '...' });
+    const second = await problems.createProblem(aliceId, { workspaceId, title: 'P2', description: '...' });
+    await problems.claimProblem(bobId, { workspaceId, problemId: first.problemId, branchId: 'b1' });
+    await problems.claimProblem(aliceId, { workspaceId, problemId: second.problemId, branchId: 'b2' });
+
+    await problems.updateProblem(bobId, {
+      workspaceId, problemId: first.problemId, status: 'resolved',
+    });
+
+    const ws = (await storage.getWorkspace(workspaceId))!;
+    expect(ws.agents.find(a => a.agentId === bobId)!.currentWork).toBeUndefined();
+    expect(ws.agents.find(a => a.agentId === aliceId)!.currentWork).toBe(second.problemId);
+  });
+
   // T-PR-7: List problems with status filter
   it('list problems with status filter', async () => {
     await problems.createProblem(aliceId, { workspaceId, title: 'P1', description: '...' });
