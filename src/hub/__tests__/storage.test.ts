@@ -293,6 +293,55 @@ describe('Hub Storage — Filesystem Persistence', () => {
     const channel = await storage.getChannel(ws.workspaceId, prob.problemId);
     expect(channel!.messages.map(m => m.content)).toEqual(['one', 'two', 'three']);
   });
+
+  // Fix-round: two appendMessage calls racing on the same directory listing
+  // used to derive the same nextSeq and the later rename silently replaced
+  // the earlier acknowledged message. claimMessageSeq uses `link` (atomic +
+  // exclusive) instead, so the loser retries at seq+1 rather than clobbering.
+  it('two concurrent appendMessage calls to the same channel both land, in distinct files', async () => {
+    const storage = createFileSystemHubStorage(dataDir);
+    const identity = createIdentityManager(storage);
+    const workspace = createWorkspaceManager(storage, thoughtStore);
+    const problems = createProblemsManager(storage, thoughtStore);
+
+    const reg = await identity.register({ name: 'alice' });
+    const ws = await workspace.createWorkspace(reg.agentId, { name: 'test', description: '...' });
+    const prob = await problems.createProblem(reg.agentId, {
+      workspaceId: ws.workspaceId,
+      title: 'test',
+      description: '...',
+    });
+
+    const [countA, countB] = await Promise.all([
+      storage.appendMessage(ws.workspaceId, prob.problemId, {
+        id: 'msg-a',
+        agentId: 'agent-a',
+        content: 'from A',
+        timestamp: new Date().toISOString(),
+      }),
+      storage.appendMessage(ws.workspaceId, prob.problemId, {
+        id: 'msg-b',
+        agentId: 'agent-b',
+        content: 'from B',
+        timestamp: new Date().toISOString(),
+      }),
+    ]);
+
+    // Both writers report a count; the higher of the two confirms both
+    // messages are accounted for rather than one clobbering the other.
+    expect(Math.max(countA, countB)).toBe(2);
+
+    const messagesDir = join(dataDir, 'hub', 'workspaces', ws.workspaceId, 'channels', prob.problemId);
+    const files = await readdir(messagesDir);
+    expect(files.filter(f => !f.includes('.tmp'))).toHaveLength(2);
+    // No leftover temp files: the claim's own cleanup (unlink the losing
+    // and winning writer's temp hardlink name) ran to completion for both.
+    expect(files.some(f => f.includes('.tmp'))).toBe(false);
+
+    const channel = await storage.getChannel(ws.workspaceId, prob.problemId);
+    expect(channel!.messages).toHaveLength(2);
+    expect(channel!.messages.map(m => m.content).sort()).toEqual(['from A', 'from B']);
+  });
 });
 
 // A crash mid-write must leave either the old file or the new one — never a
