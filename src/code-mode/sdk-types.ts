@@ -82,7 +82,7 @@ interface TB {
 
   /**
    * Multi-agent hub coordination: workspaces, problems, proposals, consensus,
-   * channels. Call register or quickJoin ONCE, keep the returned agentId, and
+   * channels, decisions. Call register or quickJoin ONCE, keep the returned agentId, and
    * pass it as agentId on every other call — identity is a durable record, so
    * the same agentId works from any connection or session and re-registering
    * mints a second agent instead of recovering the first. A call with no
@@ -126,6 +126,23 @@ interface TB {
     postSystemMessage(args: { workspaceId: string; problemId: string; content: string; ref?: { sessionId?: string; thoughtNumber?: number; branchId?: string } }): Promise<unknown>;
     workspaceStatus(args: { workspaceId: string }): Promise<unknown>;
     workspaceDigest(args: { workspaceId: string }): Promise<unknown>;
+    /**
+     * Decision ledger — hub-global, so no workspaceId scopes it and any
+     * registered agent may write. Append-only: there is no update method, and
+     * nothing anywhere takes a confidence or probability. Consult the scope
+     * BEFORE deciding in it; correct a decision with supersedeDecision, never
+     * by recording a second one that contradicts the first silently.
+     */
+    recordDecision(args: { scope: string; statement: string; rationale: string; assumptionIds?: string[]; alternatives?: Array<{ label: string; reason?: string }>; expectedOutcome?: string; evidenceRefs?: string[]; thoughtRef?: { sessionId?: string; thoughtNumber?: number; branchId?: string }; regimeRef?: string; workspaceId?: string; taskRef?: string; slug?: string; agentId?: string }): Promise<unknown>;
+    recordAssumption(args: { statement: string; scope?: string; agentId?: string }): Promise<unknown>;
+    /** Additive and never withdrawn; flips the assumption's derived status to 'challenged'. */
+    challengeAssumption(args: { assumptionId: string; reason: string; evidenceRefs?: string[]; agentId?: string }): Promise<unknown>;
+    /** scope defaults to the superseded decision's scope. Refused if that decision already has a successor. */
+    supersedeDecision(args: { supersedes: string; statement: string; rationale: string; scope?: string; assumptionIds?: string[]; alternatives?: Array<{ label: string; reason?: string }>; expectedOutcome?: string; evidenceRefs?: string[]; thoughtRef?: { sessionId?: string; thoughtNumber?: number; branchId?: string }; regimeRef?: string; workspaceId?: string; taskRef?: string; slug?: string; agentId?: string }): Promise<unknown>;
+    /** data is raw measurements only; expectationAssessment is the separate adjudication of them. */
+    recordOutcome(args: { decisionId: string; kind: string; data: Record<string, unknown>; expectationAssessment?: "consistent" | "contradicts" | "unclear"; note?: string; agentId?: string }): Promise<unknown>;
+    /** Scope matching runs both ways; health flags are computed at read time, never stored. */
+    consultDecisions(args: { scope: string; currentRegimes?: Record<string, string>; includeSuperseded?: boolean }): Promise<unknown>;
   };
 
   /**

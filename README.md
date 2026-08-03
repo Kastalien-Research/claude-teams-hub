@@ -12,8 +12,8 @@ for live observation.
 
 ## Surface
 
-- `tb.hub` — 29 operations: identity, workspaces, problems, proposals,
-  consensus, channels, status.
+- `tb.hub` — 35 operations: identity, workspaces, problems, proposals,
+  consensus, channels, status, decisions.
 - `tb.thought` / `tb.session` — the thought ledger, **transitional**: kept
   because consensus markers and proposal merges anchor to thought references.
   Agents are steered toward semantic `thoughtType`s (`action_report`,
@@ -22,6 +22,31 @@ for live observation.
   `team-hub-keeps-the-thoughtbox-thought-engine-as-a-transitional-findings-substrate`
   in the parent workspace's decisions ledger).
 - `tb.vars` — session-scoped variables.
+
+## Decisions
+
+The decision ledger (`recordDecision`, `recordAssumption`, `challengeAssumption`,
+`supersedeDecision`, `recordOutcome`, `consultDecisions`) records durable choices about a
+**scope** — a module or path — together with the assumptions they rest on and the raw
+outcomes observed afterwards. It is hub-global rather than workspace-scoped: a decision
+about a repo module has to be consultable from any session.
+
+Two invariants: **append-only** (there is no update operation; a wrong decision is retired
+by `supersedeDecision`, which writes a new record naming the old one, and the original file
+is never rewritten) and **no numeric belief math** (nothing carries a confidence or a
+posterior; `expectationAssessment` is a categorical adjudication kept separate from the raw
+`data` it adjudicates). Health flags — `rests-on-challenged-assumption`,
+`outcome-contradicts-expectation`, `superseded`, `regime-changed-since` — are computed at
+consult time and never stored.
+
+The schema deliberately mirrors the parent repo's `dev-processes/ledger/data/decisions.jsonl`
+so the two can converge: `slug` ← `decision_id`, `evidenceRefs` ← `evidence[]`, and each
+`reversal_conditions[]` entry maps to an assumption linked via `assumptionIds`. A fired
+reversal condition is then `challengeAssumption`, which surfaces on every future consult of
+the decisions that rest on it. Records live as flat per-record JSON under
+`$HUB_DATA_DIR/hub/decisions/`, so a consultation hook can read them with a glob and a
+`json.load`, with no server in the path. Importing the parent ledger is a later, parent-repo
+phase — nothing here touches it.
 
 ## Identity
 

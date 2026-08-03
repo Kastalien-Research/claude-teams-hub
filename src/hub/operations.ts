@@ -1,11 +1,12 @@
 /**
  * Operations Catalog for Hub Toolhost
  *
- * Defines all 29 hub operations organized by category with stage metadata.
+ * Defines all 35 hub operations organized by category with stage metadata.
  * Includes hub vocabulary for agent onboarding.
  */
 
 import { REVIEW_VERDICTS } from './hub-types.js';
+import { EXPECTATION_ASSESSMENTS } from './decision-types.js';
 
 export interface OperationDefinition {
   name: string;
@@ -29,6 +30,9 @@ export const HUB_VOCABULARY = {
   channel: "A message stream scoped to a problem within a workspace. Used for discussion, status updates, and coordination between agents working on related problems.",
   agent: "A registered participant in the hub. Has a unique agentId, name, and optional profile. The agentId is a durable handle stored in the hub, not a connection-scoped session: pass it on every call to act as that agent, from any connection or client, for as long as the record exists.",
   profile: "An optional role specialization (MANAGER, ARCHITECT, DEBUGGER, SECURITY, RESEARCHER, REVIEWER) that provides domain-specific mental models and behavioral priming.",
+  decision: "A durable choice about a scope (a module or path), recorded with its rationale, the alternatives rejected, and evidence a reader can check. Decisions are hub-global, not workspace-scoped, and append-only: a decision that turns out wrong is retired with supersede_decision, which writes a NEW record pointing at the old one. Nothing is ever edited in place, and no decision carries a confidence or probability.",
+  assumption: "A belief a decision rests on, recorded separately so it can be challenged independently. Status is never stored — it is derived: an assumption is 'challenged' once any challenge exists, 'proposed' otherwise. Challenging one surfaces the flag 'rests-on-challenged-assumption' on every decision linked to it, which is how a fired reversal condition reaches the decisions it invalidates.",
+  outcome: "Raw observed facts about what a decision actually produced, recorded after the fact. `data` holds measurements only, never a verdict; the optional `expectationAssessment` ('consistent' | 'contradicts' | 'unclear') is a separate categorical adjudication kept apart from the data so a reader can check one against the other.",
 };
 
 // =============================================================================
@@ -675,6 +679,219 @@ const STATUS_OPERATIONS: OperationDefinition[] = [
   },
 ];
 
+/**
+ * The decision ledger. Stage 1, not 2: these records are hub-global, so there
+ * is no workspaceId to check membership against. `workspaceId` appears only as
+ * an optional context field on record_decision, never as an access scope.
+ */
+const DECISION_OPERATIONS: OperationDefinition[] = [
+  {
+    name: "record_decision",
+    title: "Record Decision",
+    description: "Record a durable decision about a scope (a module or path), with the rationale, the alternatives rejected, and evidence a reader can check. Decisions are hub-global and append-only — there is no update operation. To correct one, use supersede_decision, which writes a new record pointing at the old one; the original is never edited. Do not record a confidence or probability: this ledger is categorical.",
+    category: "decisions",
+    stage: 1,
+    inputSchema: {
+      type: "object",
+      properties: {
+        scope: { type: "string", description: "Module or path the decision governs, e.g. 'src/dispatch/'" },
+        statement: { type: "string", description: "What was decided" },
+        rationale: { type: "string", description: "Why it was decided that way" },
+        assumptionIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Assumptions this decision rests on. Each must already exist (record_assumption first) — a dangling id is rejected, not stored.",
+        },
+        alternatives: {
+          type: "array",
+          description: "Options considered and NOT chosen",
+          items: {
+            type: "object",
+            properties: {
+              label: { type: "string" },
+              reason: { type: "string", description: "Why it was rejected" },
+            },
+            required: ["label"],
+          },
+        },
+        expectedOutcome: { type: "string", description: "What this decision is expected to produce — what record_outcome is later adjudicated against" },
+        evidenceRefs: {
+          type: "array",
+          items: { type: "string" },
+          description: "Commits, files, probe outputs a reader can go check",
+        },
+        thoughtRef: {
+          type: "object",
+          description: "Optional pointer into the thought ledger (structured but not validated)",
+          properties: {
+            sessionId: { type: "string" },
+            thoughtNumber: { type: "number" },
+            branchId: { type: "string" },
+          },
+        },
+        regimeRef: { type: "string", description: "The governing regime and version, e.g. 'commit-message@2' — consult flags the decision when the caller reports a different current version" },
+        workspaceId: { type: "string", description: "Optional context. Decisions are hub-global; this is NOT an access scope" },
+        taskRef: { type: "string", description: "Optional task or issue reference" },
+        slug: { type: "string", description: "Optional stable handle, unique across the ledger when present" },
+      },
+      required: ["scope", "statement", "rationale"],
+    },
+    example: {
+      scope: "src/dispatch/",
+      statement: "Queue rows move to 'processing' only after the runner acknowledges",
+      rationale: "Boot recovery re-drives every 'processing' row, so an unacknowledged claim replays work",
+      alternatives: [{ label: "Mark processing at dequeue", reason: "Loses the row if the runner dies before ack" }],
+      evidenceRefs: ["src/dispatch/main.ts", "commit 1a70467"],
+    },
+  },
+  {
+    name: "record_assumption",
+    title: "Record Assumption",
+    description: "Record a belief a decision rests on, so it can be challenged independently of the decision. Status is never supplied and never stored — it is derived from the challenges present at read time.",
+    category: "decisions",
+    stage: 1,
+    inputSchema: {
+      type: "object",
+      properties: {
+        statement: { type: "string", description: "The belief, stated so it could be shown false" },
+        scope: { type: "string", description: "Optional module or path the assumption is about" },
+      },
+      required: ["statement"],
+    },
+    example: {
+      statement: "The dispatch queue has a single writer process",
+      scope: "src/dispatch/",
+    },
+  },
+  {
+    name: "challenge_assumption",
+    title: "Challenge Assumption",
+    description: "Record evidence against an assumption. Challenges are additive and never withdrawn: the assumption's derived status becomes 'challenged', and every decision linked to it consults with the health flag 'rests-on-challenged-assumption'. This is how a fired reversal condition reaches the decisions it invalidates.",
+    category: "decisions",
+    stage: 1,
+    inputSchema: {
+      type: "object",
+      properties: {
+        assumptionId: { type: "string", description: "Assumption to challenge" },
+        reason: { type: "string", description: "Why the assumption looks false" },
+        evidenceRefs: {
+          type: "array",
+          items: { type: "string" },
+          description: "Commits, files, probe outputs supporting the challenge",
+        },
+      },
+      required: ["assumptionId", "reason"],
+    },
+    example: {
+      assumptionId: "b3f1c2d4-5678-4abc-9def-0123456789ab",
+      reason: "The reconcile timer starts a second writer every minute",
+      evidenceRefs: ["deploy/README.md"],
+    },
+  },
+  {
+    name: "supersede_decision",
+    title: "Supersede Decision",
+    description: "Retire a decision by recording a NEW one in its place. This is the ONLY way to correct a decision — the superseded record is never edited, and the chain stays readable. `scope` defaults to the superseded decision's scope. A decision that already has a successor is refused, naming that successor: supersession is a chain, not a fork.",
+    category: "decisions",
+    stage: 1,
+    inputSchema: {
+      type: "object",
+      properties: {
+        supersedes: { type: "string", description: "Id of the decision being retired" },
+        statement: { type: "string", description: "What is decided instead" },
+        rationale: { type: "string", description: "Why the earlier decision no longer holds" },
+        scope: { type: "string", description: "Defaults to the superseded decision's scope" },
+        assumptionIds: { type: "array", items: { type: "string" }, description: "Assumptions the new decision rests on; each must already exist" },
+        alternatives: {
+          type: "array",
+          description: "Options considered and NOT chosen",
+          items: {
+            type: "object",
+            properties: { label: { type: "string" }, reason: { type: "string" } },
+            required: ["label"],
+          },
+        },
+        expectedOutcome: { type: "string", description: "What the replacement is expected to produce" },
+        evidenceRefs: { type: "array", items: { type: "string" }, description: "Evidence a reader can check" },
+        thoughtRef: {
+          type: "object",
+          description: "Optional pointer into the thought ledger",
+          properties: {
+            sessionId: { type: "string" },
+            thoughtNumber: { type: "number" },
+            branchId: { type: "string" },
+          },
+        },
+        regimeRef: { type: "string", description: "Governing regime and version, e.g. 'commit-message@2'" },
+        workspaceId: { type: "string", description: "Optional context, not an access scope" },
+        taskRef: { type: "string", description: "Optional task or issue reference" },
+        slug: { type: "string", description: "Optional stable handle, unique across the ledger" },
+      },
+      required: ["supersedes", "statement", "rationale"],
+    },
+    example: {
+      supersedes: "a1b2c3d4-5678-4abc-9def-0123456789ab",
+      statement: "Queue rows move to 'processing' under a lease with a deadline",
+      rationale: "Acknowledgement alone leaks rows when a runner hangs without dying",
+      evidenceRefs: ["docs/incidents/2026-07-21.md"],
+    },
+  },
+  {
+    name: "record_outcome",
+    title: "Record Outcome",
+    description: "Record what a decision actually produced. `data` carries raw measurements only — never a verdict. The optional expectationAssessment is a separate categorical adjudication of those measurements against the decision's expectedOutcome — 'consistent', 'contradicts', or 'unclear' — kept apart from the data so a reader can check one against the other. 'contradicts' surfaces the health flag 'outcome-contradicts-expectation' on every later consult.",
+    category: "decisions",
+    stage: 1,
+    inputSchema: {
+      type: "object",
+      properties: {
+        decisionId: { type: "string", description: "Decision this outcome is about. Must exist." },
+        kind: { type: "string", description: "Free-form category, e.g. 'edit-distance', 'false_done', 'verify-exit'" },
+        data: { type: "object", description: "Raw observed facts. Required — an outcome with no measurements is not checkable." },
+        // Derived, not restated — a hand-written copy is what drifted before.
+        expectationAssessment: {
+          type: "string",
+          enum: [...EXPECTATION_ASSESSMENTS],
+          description: "How the data relates to the decision's expectedOutcome",
+        },
+        note: { type: "string", description: "Optional context for the reader" },
+      },
+      required: ["decisionId", "kind", "data"],
+    },
+    example: {
+      decisionId: "a1b2c3d4-5678-4abc-9def-0123456789ab",
+      kind: "verify-exit",
+      data: { exitCode: 1, failedChecks: 3, runs: 12 },
+      expectationAssessment: "contradicts",
+      note: "The lease deadline fires before slow runners finish",
+    },
+  },
+  {
+    name: "consult_decisions",
+    title: "Consult Decisions",
+    description: "Read the decisions governing a scope before deciding in it. Scope matching runs both ways: consulting 'src/dispatch/runners/mcp.ts' returns decisions scoped 'src/dispatch/', and consulting 'src/dispatch/' returns the finer-scoped decisions beneath it. Each result carries health flags computed at read time — rests-on-challenged-assumption, outcome-contradicts-expectation, superseded, regime-changed-since — which are never stored on the record. Superseded decisions are omitted unless includeSuperseded is set.",
+    category: "decisions",
+    stage: 1,
+    inputSchema: {
+      type: "object",
+      properties: {
+        scope: { type: "string", description: "Module or path to consult, e.g. 'src/dispatch/runners/mcp.ts'" },
+        currentRegimes: {
+          type: "object",
+          description: "Regime versions in force right now, e.g. { \"commit-message\": \"3\" }. A decision whose regimeRef names one of these at a different version is flagged 'regime-changed-since'. There is no server-side registry — this is caller-supplied.",
+          additionalProperties: { type: "string" },
+        },
+        includeSuperseded: { type: "boolean", description: "Include retired decisions, each carrying supersededBy. Default false." },
+      },
+      required: ["scope"],
+    },
+    example: {
+      scope: "src/dispatch/runners/mcp.ts",
+      currentRegimes: { "commit-message": "3" },
+    },
+  },
+];
+
 // =============================================================================
 // Combined Operations
 // =============================================================================
@@ -687,6 +904,7 @@ export const HUB_OPERATIONS: OperationDefinition[] = [
   ...CONSENSUS_OPERATIONS,
   ...CHANNEL_OPERATIONS,
   ...STATUS_OPERATIONS,
+  ...DECISION_OPERATIONS,
 ];
 
 /**
@@ -762,6 +980,11 @@ export function getOperationsCatalog(): string {
           name: "status",
           stage: 2,
           description: "Workspace health and digest views",
+        },
+        {
+          name: "decisions",
+          stage: 1,
+          description: "Record and consult durable decisions, assumptions, and outcome evidence (hub-global)",
         },
       ],
     },

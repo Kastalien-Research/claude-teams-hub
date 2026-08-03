@@ -5,6 +5,13 @@
  * These types define the multi-agent coordination layer.
  */
 
+import type {
+  AssumptionChallenge,
+  AssumptionRecord,
+  DecisionRecord,
+  OutcomeRecord,
+} from './decision-types.js';
+
 // =============================================================================
 // 1.1 Agent Identity
 // =============================================================================
@@ -233,7 +240,14 @@ export type HubOperation =
   | 'get_profile_prompt'
   // Agent Teams bootstrap
   | 'quick_join'
-  | 'workspace_digest';
+  | 'workspace_digest'
+  // Decisions (hub-global epistemic ledger)
+  | 'record_decision'
+  | 'record_assumption'
+  | 'challenge_assumption'
+  | 'supersede_decision'
+  | 'record_outcome'
+  | 'consult_decisions';
 
 // =============================================================================
 // Progressive Disclosure Stages (from ADR Section 6)
@@ -250,7 +264,16 @@ export const STAGE_OPERATIONS: Record<DisclosureStage, HubOperation[]> = {
   // an agent whose principal owns the workspace creator but who has no
   // membership yet. Authorization lives in the workspace manager, which
   // checks coordinator role or owning principal explicitly.
-  1: ['whoami', 'create_workspace', 'join_workspace', 'transfer_coordinator', 'get_profile_prompt'],
+  // The six decision operations sit here, not at stage 2, because the decision
+  // ledger is hub-global like the agent registry: a decision about a repo
+  // module has to be consultable from any workspace, and stage 2 would force a
+  // workspaceId plus a membership check that no global store can answer.
+  // Records carry an OPTIONAL workspaceId as context; it is not an access scope.
+  1: [
+    'whoami', 'create_workspace', 'join_workspace', 'transfer_coordinator', 'get_profile_prompt',
+    'record_decision', 'record_assumption', 'challenge_assumption',
+    'supersede_decision', 'record_outcome', 'consult_decisions',
+  ],
   2: [
     'create_problem', 'claim_problem', 'update_problem', 'list_problems',
     'add_dependency', 'remove_dependency', 'ready_problems', 'blocked_problems', 'create_sub_problem',
@@ -331,4 +354,38 @@ export interface HubStorage {
    * writers must all be retained. Throws if the channel does not exist.
    */
   appendMessage(workspaceId: string, problemId: string, message: ChannelMessage): Promise<number>;
+
+  // Decision ledger operations (hub-global, like the agent registry — no
+  // workspaceId key anywhere below). There is deliberately no updateDecision
+  // and no updateOutcome: a decision that turns out wrong is retired by
+  // recording a NEW decision whose `supersedes` names it, and the original
+  // file is never rewritten. The single in-place write is the additive
+  // challenge append.
+  getDecision(decisionId: string): Promise<DecisionRecord | null>;
+
+  /** Create-time only — managers never rewrite a decision they have saved. */
+  saveDecision(decision: DecisionRecord): Promise<void>;
+
+  listDecisions(): Promise<DecisionRecord[]>;
+
+  getAssumption(assumptionId: string): Promise<AssumptionRecord | null>;
+
+  /** Create-time only; challenges arrive through appendAssumptionChallenge. */
+  saveAssumption(assumption: AssumptionRecord): Promise<void>;
+
+  listAssumptions(): Promise<AssumptionRecord[]>;
+
+  /**
+   * Appends a challenge to an assumption. Idempotent per challenge id;
+   * concurrent challenges from different writers must all be retained — the
+   * same contract as appendReview and appendEndorsement. Throws if the
+   * assumption does not exist.
+   */
+  appendAssumptionChallenge(assumptionId: string, challenge: AssumptionChallenge): Promise<void>;
+
+  /** Create-time only. Outcomes accumulate; none is ever edited. */
+  saveOutcome(outcome: OutcomeRecord): Promise<void>;
+
+  /** Every outcome in the ledger; consult filters by decisionId in the manager. */
+  listOutcomes(): Promise<OutcomeRecord[]>;
 }
