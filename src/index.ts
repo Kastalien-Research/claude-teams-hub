@@ -59,6 +59,19 @@ async function createStorage(): Promise<StorageBundle> {
   const baseDir =
     process.env.HUB_DATA_DIR || path.join(os.homedir(), ".team-hub");
 
+  // An unpinned HUB_DATA_DIR is exactly how a durable agent/workspace
+  // identity can fork or vanish across sessions or environments (observed
+  // 2026-08-02): whichever default resolves differs by machine/user/shell,
+  // so silently falling back here is the failure, not just a config gap.
+  // This line is deliberately loud (unconditional, not debug-gated) so the
+  // resolved path is visible in every server log, not just the failure mode.
+  if (!process.env.HUB_DATA_DIR) {
+    console.error(
+      `[Storage] HUB_DATA_DIR is unset — falling back to default data dir: ${baseDir}. ` +
+        `Set HUB_DATA_DIR explicitly to pin durable identity across sessions/environments.`,
+    );
+  }
+
   if (storageType === "memory") {
     // Session/thought storage is volatile; hub state still goes through the
     // filesystem hub storage under baseDir — there is no in-memory HubStorage

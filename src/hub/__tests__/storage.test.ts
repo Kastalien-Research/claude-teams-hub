@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { readFile } from 'node:fs/promises';
@@ -60,8 +60,9 @@ describe('Hub Storage — Filesystem Persistence', () => {
     expect(content.id).toBe(prob.problemId);
   });
 
-  // T-STOR-3: Channel persisted to filesystem
-  it('channel persisted to filesystem after message', async () => {
+  // T-STOR-3: Channel persisted to filesystem — messages land in the
+  // crash-safe per-file directory, not a whole-file rewrite of the channel.
+  it('channel message persisted as its own file under the channel directory', async () => {
     const storage = createFileSystemHubStorage(dataDir);
     const identity = createIdentityManager(storage);
     const workspace = createWorkspaceManager(storage, thoughtStore);
@@ -81,9 +82,70 @@ describe('Hub Storage — Filesystem Persistence', () => {
       content: 'hello',
     });
 
-    const filePath = join(dataDir, 'hub', 'workspaces', ws.workspaceId, 'channels', `${prob.problemId}.json`);
-    const content = JSON.parse(await readFile(filePath, 'utf-8'));
-    expect(content.messages).toHaveLength(1);
+    // The metadata file created at problem-creation time is untouched by the
+    // append — it still holds the empty array it was saved with.
+    const metaPath = join(dataDir, 'hub', 'workspaces', ws.workspaceId, 'channels', `${prob.problemId}.json`);
+    const meta = JSON.parse(await readFile(metaPath, 'utf-8'));
+    expect(meta.messages).toEqual([]);
+
+    // The message itself is a standalone file under the channel's directory.
+    const messagesDir = join(dataDir, 'hub', 'workspaces', ws.workspaceId, 'channels', prob.problemId);
+    const files = await readdir(messagesDir);
+    expect(files).toEqual(['000001.json']);
+    const messageContent = JSON.parse(await readFile(join(messagesDir, files[0]), 'utf-8'));
+    expect(messageContent.content).toBe('hello');
+
+    // No temp files left behind after a successful write.
+    expect(files.some(f => f.includes('.tmp'))).toBe(false);
+
+    // The public API still reports one merged message.
+    const channel = await storage.getChannel(ws.workspaceId, prob.problemId);
+    expect(channel!.messages).toHaveLength(1);
+    expect(channel!.messages[0].content).toBe('hello');
+  });
+
+  // Crash-safety contract: a channel written entirely by the pre-split code
+  // path (embedded `messages` array, no per-file directory) must still read
+  // correctly with no migration step.
+  it('a legacy whole-file channel (embedded messages, no message directory) still reads', async () => {
+    const storage = createFileSystemHubStorage(dataDir);
+    const channelPath = join(dataDir, 'hub', 'workspaces', 'ws-legacy', 'channels', 'prob-legacy.json');
+    await mkdir(dirname(channelPath), { recursive: true });
+    await writeFile(
+      channelPath,
+      JSON.stringify({
+        id: 'prob-legacy',
+        workspaceId: 'ws-legacy',
+        problemId: 'prob-legacy',
+        messages: [
+          { id: 'm1', agentId: 'agent-1', content: 'legacy msg 1', timestamp: '2026-01-01T00:00:00.000Z' },
+          { id: 'm2', agentId: 'agent-2', content: 'legacy msg 2', timestamp: '2026-01-01T00:00:01.000Z' },
+        ],
+      }),
+      'utf-8',
+    );
+
+    const channel = await storage.getChannel('ws-legacy', 'prob-legacy');
+    expect(channel).not.toBeNull();
+    expect(channel!.messages).toHaveLength(2);
+    expect(channel!.messages.map(m => m.content)).toEqual(['legacy msg 1', 'legacy msg 2']);
+
+    // Appending after the legacy read works and lands after the legacy history.
+    const count = await storage.appendMessage('ws-legacy', 'prob-legacy', {
+      id: 'm3',
+      agentId: 'agent-1',
+      content: 'new msg after legacy',
+      timestamp: new Date().toISOString(),
+    });
+    expect(count).toBe(3);
+
+    const reloaded = await storage.getChannel('ws-legacy', 'prob-legacy');
+    expect(reloaded!.messages).toHaveLength(3);
+    expect(reloaded!.messages.map(m => m.content)).toEqual([
+      'legacy msg 1',
+      'legacy msg 2',
+      'new msg after legacy',
+    ]);
   });
 
   // Known issue #4: channel read/write key symmetry, enforced at the storage boundary
@@ -203,6 +265,148 @@ describe('Hub Storage — Filesystem Persistence', () => {
     expect(loadedChannel).not.toBeNull();
     expect(loadedChannel!.messages).toHaveLength(1);
     expect(loadedChannel!.messages[0].content).toBe('persisted message');
+  });
+
+  it('sequential channel messages persist as one file each, in append order', async () => {
+    const storage = createFileSystemHubStorage(dataDir);
+    const identity = createIdentityManager(storage);
+    const workspace = createWorkspaceManager(storage, thoughtStore);
+    const problems = createProblemsManager(storage, thoughtStore);
+    const channels = createChannelsManager(storage);
+
+    const reg = await identity.register({ name: 'alice' });
+    const ws = await workspace.createWorkspace(reg.agentId, { name: 'test', description: '...' });
+    const prob = await problems.createProblem(reg.agentId, {
+      workspaceId: ws.workspaceId,
+      title: 'test',
+      description: '...',
+    });
+
+    for (const content of ['one', 'two', 'three']) {
+      await channels.postMessage(reg.agentId, { workspaceId: ws.workspaceId, problemId: prob.problemId, content });
+    }
+
+    const messagesDir = join(dataDir, 'hub', 'workspaces', ws.workspaceId, 'channels', prob.problemId);
+    const files = (await readdir(messagesDir)).sort();
+    expect(files).toEqual(['000001.json', '000002.json', '000003.json']);
+
+    const channel = await storage.getChannel(ws.workspaceId, prob.problemId);
+    expect(channel!.messages.map(m => m.content)).toEqual(['one', 'two', 'three']);
+  });
+
+  // Fix-round: two appendMessage calls racing on the same directory listing
+  // used to derive the same nextSeq and the later rename silently replaced
+  // the earlier acknowledged message. claimMessageSeq uses `link` (atomic +
+  // exclusive) instead, so the loser retries at seq+1 rather than clobbering.
+  it('two concurrent appendMessage calls to the same channel both land, in distinct files', async () => {
+    const storage = createFileSystemHubStorage(dataDir);
+    const identity = createIdentityManager(storage);
+    const workspace = createWorkspaceManager(storage, thoughtStore);
+    const problems = createProblemsManager(storage, thoughtStore);
+
+    const reg = await identity.register({ name: 'alice' });
+    const ws = await workspace.createWorkspace(reg.agentId, { name: 'test', description: '...' });
+    const prob = await problems.createProblem(reg.agentId, {
+      workspaceId: ws.workspaceId,
+      title: 'test',
+      description: '...',
+    });
+
+    const [countA, countB] = await Promise.all([
+      storage.appendMessage(ws.workspaceId, prob.problemId, {
+        id: 'msg-a',
+        agentId: 'agent-a',
+        content: 'from A',
+        timestamp: new Date().toISOString(),
+      }),
+      storage.appendMessage(ws.workspaceId, prob.problemId, {
+        id: 'msg-b',
+        agentId: 'agent-b',
+        content: 'from B',
+        timestamp: new Date().toISOString(),
+      }),
+    ]);
+
+    // Both writers report a count; the higher of the two confirms both
+    // messages are accounted for rather than one clobbering the other.
+    expect(Math.max(countA, countB)).toBe(2);
+
+    const messagesDir = join(dataDir, 'hub', 'workspaces', ws.workspaceId, 'channels', prob.problemId);
+    const files = await readdir(messagesDir);
+    expect(files.filter(f => !f.includes('.tmp'))).toHaveLength(2);
+    // No leftover temp files: the claim's own cleanup (unlink the losing
+    // and winning writer's temp hardlink name) ran to completion for both.
+    expect(files.some(f => f.includes('.tmp'))).toBe(false);
+
+    const channel = await storage.getChannel(ws.workspaceId, prob.problemId);
+    expect(channel!.messages).toHaveLength(2);
+    expect(channel!.messages.map(m => m.content).sort()).toEqual(['from A', 'from B']);
+  });
+});
+
+// A crash mid-write must leave either the old file or the new one — never a
+// truncated hybrid. writeJson goes through a temp file + rename for exactly
+// this reason; these tests check the observable trace of that discipline
+// (no stray temp files, no interleaved content from concurrent writers)
+// rather than injecting a real process kill, which vitest cannot do mid-await.
+describe('Hub Storage — Atomic Writes Leave No Partial State', () => {
+  let dataDir: string;
+
+  beforeEach(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), 'hub-atomic-'));
+  });
+
+  afterEach(async () => {
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  it('concurrent writes to the same workspace file never produce corrupt JSON', async () => {
+    const storage = createFileSystemHubStorage(dataDir);
+    const base = {
+      id: 'ws-race',
+      name: 'race',
+      description: '...',
+      createdBy: 'a',
+      mainSessionId: 's',
+      agents: [],
+      createdAt: '',
+      updatedAt: '',
+    };
+
+    // Ten concurrent writers racing on the same file. Without temp-file +
+    // rename, an interleaved writeFile could leave the file with bytes from
+    // two different JSON.stringify calls spliced together — unparseable.
+    await Promise.all(
+      Array.from({ length: 10 }, (_, i) => storage.saveWorkspace({ ...base, name: `race-${i}` } as any)),
+    );
+
+    const filePath = join(dataDir, 'hub', 'workspaces', 'ws-race', 'workspace.json');
+    const raw = await readFile(filePath, 'utf-8');
+    // Must parse cleanly and be exactly one of the ten writers' payloads —
+    // a lost update under concurrency is the documented tradeoff (no
+    // locking, single-process only); a corrupt splice is not.
+    const parsed = JSON.parse(raw);
+    expect(parsed.name).toMatch(/^race-\d$/);
+
+    const dir = await readdir(join(dataDir, 'hub', 'workspaces', 'ws-race'));
+    expect(dir.some(f => f.includes('.tmp'))).toBe(false);
+  });
+
+  it('a normal write leaves no temp file behind in the target directory', async () => {
+    const storage = createFileSystemHubStorage(dataDir);
+    await storage.saveWorkspace({
+      id: 'ws-clean',
+      name: 'clean',
+      description: '...',
+      createdBy: 'a',
+      mainSessionId: 's',
+      agents: [],
+      createdAt: '',
+      updatedAt: '',
+    } as any);
+
+    const dir = await readdir(join(dataDir, 'hub', 'workspaces', 'ws-clean'));
+    expect(dir).toEqual(['workspace.json']);
   });
 });
 
