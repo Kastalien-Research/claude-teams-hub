@@ -55,6 +55,21 @@ agentId itself is the one unrecoverable case in local mode, so keep it.
 Storage is filesystem-only (`HUB_DATA_DIR`, default `~/.team-hub`);
 `THOUGHTBOX_STORAGE=memory` keeps everything volatile for tests. There is no
 Supabase, no auth, no telemetry: this is a local, single-trust-domain server.
+Leaving `HUB_DATA_DIR` unset logs a loud startup line naming the resolved
+default path — an unpinned data dir is how a durable agent/workspace identity
+can fork or vanish across sessions and environments, so pin it explicitly for
+anything you want to survive.
+
+Every record write (workspace, problem, proposal, consensus marker, channel
+metadata, channel message) goes through temp-file + atomic `rename`, so a
+crash mid-write leaves either the previous file or the new one, never a
+truncated hybrid. Channel messages are additionally append-per-file
+(`channels/<problemId>/NNNN.json`) rather than a whole-channel rewrite, so
+posting message N+1 cannot corrupt messages 1..N; the read path merges the
+per-file messages with whatever a channel's `<problemId>.json` metadata file
+already holds, so channels written before this split keep reading with no
+migration step. None of this adds concurrency safety — local mode is still
+single-process, per the existing storage-module doc comment.
 
 > `@modelcontextprotocol/sdk` is pinned **exactly** at 1.29.0: the MCP tasks
 > capability (`FileSystemTaskStore`) binds to the SDK's experimental API, which

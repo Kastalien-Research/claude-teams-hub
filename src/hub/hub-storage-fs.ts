@@ -4,8 +4,9 @@
  * ADR-002 Section 10.17: Storage Persistence Tests
  */
 
-import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { readFile, writeFile, rename, unlink, mkdir, readdir } from 'node:fs/promises';
+import { join, dirname, basename } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import type {
   HubStorage,
   AgentIdentity,
@@ -14,6 +15,7 @@ import type {
   Proposal,
   ConsensusMarker,
   Channel,
+  ChannelMessage,
 } from './hub-types.js';
 import { statusAfterReview } from './hub-types.js';
 
@@ -21,6 +23,13 @@ import { statusAfterReview } from './hub-types.js';
  * Single-writer storage: append operations below are read-modify-write on
  * JSON files and are only safe because local mode runs one server process.
  * Multi-tenant deployments use SupabaseHubStorage (row-level appends).
+ *
+ * Every write goes through `writeJson`, which writes to a sibling temp file
+ * and `rename`s it into place — POSIX rename is atomic within a directory, so
+ * a crash mid-write leaves either the old file or the new one, never a
+ * truncated one. This makes individual records crash-safe; it does not make
+ * concurrent writers safe (still one process, per the comment above), so no
+ * locking is added.
  */
 
 async function ensureDir(dir: string): Promise<void> {
@@ -70,10 +79,35 @@ async function readdirOrWarn(dir: string): Promise<string[]> {
   }
 }
 
+/**
+ * Writes JSON to `path` via temp-file + atomic rename, so a crash mid-write
+ * cannot leave a truncated or partially-written record on disk — the rename
+ * either lands the full new content or doesn't happen at all.
+ */
 async function writeJson(path: string, data: unknown): Promise<void> {
   const dir = dirname(path);
   await ensureDir(dir);
-  await writeFile(path, JSON.stringify(data, null, 2), 'utf-8');
+  const tmpPath = join(dir, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
+  await writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+  try {
+    await rename(tmpPath, path);
+  } catch (err) {
+    // Best-effort cleanup so a failed rename doesn't leave the temp file
+    // behind; the original error is what the caller needs to see.
+    await unlink(tmpPath).catch(() => {});
+    throw err;
+  }
+}
+
+const MESSAGE_FILE_RE = /^(\d+)\.json$/;
+
+/**
+ * Extracts the numeric sequence from a channel message filename (`NNNN.json`),
+ * or null for anything else in the directory (temp files, stray entries).
+ */
+function messageSeq(filename: string): number | null {
+  const match = MESSAGE_FILE_RE.exec(filename);
+  return match ? Number(match[1]) : null;
 }
 
 export function createFileSystemHubStorage(dataDir: string): HubStorage {
@@ -82,6 +116,38 @@ export function createFileSystemHubStorage(dataDir: string): HubStorage {
 
   function workspaceDir(workspaceId: string): string {
     return join(hubDir, 'workspaces', workspaceId);
+  }
+
+  // Channel storage is split in two: `<problemId>.json` holds channel
+  // metadata plus whatever messages were embedded by a legacy whole-file
+  // write (saveChannel, or an appendMessage from before this split existed);
+  // `<problemId>/NNNN.json` holds messages appended since the split, one
+  // crash-safe file per message instead of a whole-file rewrite. getChannel
+  // merges both — legacy messages first, then the per-file ones in filename
+  // order — so a channel written entirely by the old code path still reads
+  // correctly with no migration step.
+  function channelMetaPath(workspaceId: string, problemId: string): string {
+    return join(workspaceDir(workspaceId), 'channels', `${problemId}.json`);
+  }
+
+  function channelMessagesDir(workspaceId: string, problemId: string): string {
+    return join(workspaceDir(workspaceId), 'channels', problemId);
+  }
+
+  async function readMessageFiles(workspaceId: string, problemId: string): Promise<ChannelMessage[]> {
+    const dir = channelMessagesDir(workspaceId, problemId);
+    const entries = await readdirOrWarn(dir);
+    const seqAndFile = entries
+      .map(name => ({ name, seq: messageSeq(name) }))
+      .filter((e): e is { name: string; seq: number } => e.seq !== null)
+      .sort((a, b) => a.seq - b.seq);
+
+    const messages: ChannelMessage[] = [];
+    for (const { name } of seqAndFile) {
+      const message = await readJson<ChannelMessage>(join(dir, name));
+      if (message) messages.push(message);
+    }
+    return messages;
   }
 
   return {
@@ -224,7 +290,13 @@ export function createFileSystemHubStorage(dataDir: string): HubStorage {
 
     // Channel operations
     async getChannel(workspaceId, problemId) {
-      return readJson<Channel>(join(workspaceDir(workspaceId), 'channels', `${problemId}.json`));
+      const meta = await readJson<Channel>(channelMetaPath(workspaceId, problemId));
+      if (!meta) return null;
+      const perFileMessages = await readMessageFiles(workspaceId, problemId);
+      // `meta.messages` is whatever a legacy whole-file write left behind
+      // (possibly empty, possibly a full history predating the per-file
+      // split); per-file messages were appended after it, so they sort after.
+      return { ...meta, messages: [...meta.messages, ...perFileMessages] };
     },
 
     async saveChannel(channel) {
@@ -237,18 +309,28 @@ export function createFileSystemHubStorage(dataDir: string): HubStorage {
           `Channel id must equal its problemId: ${channel.id} !== ${channel.problemId}`,
         );
       }
-      await writeJson(
-        join(workspaceDir(channel.workspaceId), 'channels', `${channel.problemId}.json`),
-        channel,
-      );
+      await writeJson(channelMetaPath(channel.workspaceId, channel.problemId), channel);
     },
 
     async appendMessage(workspaceId, problemId, message) {
-      const channel = await this.getChannel(workspaceId, problemId);
-      if (!channel) throw new Error(`Channel not found for problem: ${problemId}`);
-      channel.messages.push(message);
-      await this.saveChannel(channel);
-      return channel.messages.length;
+      const meta = await readJson<Channel>(channelMetaPath(workspaceId, problemId));
+      if (!meta) throw new Error(`Channel not found for problem: ${problemId}`);
+
+      const dir = channelMessagesDir(workspaceId, problemId);
+      const existing = await readdirOrWarn(dir);
+      const maxSeq = existing.reduce((max, name) => {
+        const seq = messageSeq(name);
+        return seq !== null && seq > max ? seq : max;
+      }, 0);
+      const nextSeq = maxSeq + 1;
+      const fileName = `${String(nextSeq).padStart(6, '0')}.json`;
+      // One message per file — a crash mid-write can corrupt at most this
+      // one message file, never the rest of the channel (writeJson itself
+      // is atomic via temp-file + rename, on top of the one-file-per-message
+      // split).
+      await writeJson(join(dir, fileName), message);
+
+      return meta.messages.length + existing.filter(name => messageSeq(name) !== null).length + 1;
     },
   };
 }
