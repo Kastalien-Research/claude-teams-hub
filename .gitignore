@@ -22,6 +22,9 @@ __pycache__/
 # Throwaway local hub state from probes/smokes
 .tmp-hubdata/
 
+# Vendored read-only reference checkouts (root-level only; src/references is code)
+/references/
+
 # Logs and editor droppings
 *.log
 .DS_Store
