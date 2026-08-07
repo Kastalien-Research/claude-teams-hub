@@ -52,4 +52,33 @@ describe("extraction-boundary architecture", { timeout: 30_000 }, () => {
     }
     expect(offenders).toEqual([]);
   });
+
+  // RFC 0001: the dependency direction is src/celld -> src/hub, never the
+  // reverse — celld routing composes AROUND the hub (injected at index.ts /
+  // server-factory), so the hub stays celld-agnostic and the filesystem path
+  // cannot silently grow a celld dependency. The guard above already blocks
+  // src/hub from importing ../celld/*; this one blocks any OTHER spelling
+  // (deep relative, re-export) by scanning for the directory name itself.
+  it("src/hub never references src/celld", () => {
+    const hubDir = join(SRC, "hub");
+    const offenders = sourceFiles(hubDir).filter(
+      (f) => !f.includes("__tests__") && /from\s+["'][^"']*celld/.test(readFileSync(f, "utf8"))
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  // The domain reducer must stay runtime-portable: it is bundled into the
+  // celld Worker, where node: modules are inert stubs at best (RFC 0001,
+  // probe 0.5). Web Crypto and structuredClone only.
+  it("src/celld/domain and canonical-json import no node: modules", () => {
+    const portable = [
+      ...sourceFiles(join(SRC, "celld", "domain")),
+      join(SRC, "celld", "canonical-json.ts"),
+      join(SRC, "celld", "errors.ts"),
+    ];
+    const offenders = portable.filter(
+      (f) => !f.includes("__tests__") && /from\s+["']node:/.test(readFileSync(f, "utf8"))
+    );
+    expect(offenders).toEqual([]);
+  });
 });
