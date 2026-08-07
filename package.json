@@ -18,7 +18,9 @@
     "check:types": "tsc --noEmit",
     "check:lint": "oxlint -c oxlint.json src/",
     "check:cycles": "./scripts/check-cycles.sh",
-    "check:event-types": "tsx scripts/check-event-type-parity.ts"
+    "check:event-types": "tsx scripts/check-event-type-parity.ts",
+    "test:celld:integration": "vitest run --config vitest.integration.config.ts",
+    "canary:celld": "tsx src/celld/canary/cli.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",

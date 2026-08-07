@@ -127,6 +127,29 @@ services:
         condition: service_completed_successfully
     networks: [celld]
 
+  # The hub under test. Its /data volume is project-scoped and starts empty —
+  # this stack NEVER mounts the standing team-hub volume. CELLD_TTL_MS lives
+  # on the celld nodes (node lease lifetime), not here.
+  team-hub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      PORT: "1731"
+      THOUGHTBOX_STORAGE: fs
+      HUB_DATA_DIR: /data
+      HUB_CELLD_ENDPOINTS: http://celld-a:8080,http://celld-b:8080
+      HUB_CELLD_REQUEST_TIMEOUT_MS: "10000"
+      HUB_CELLD_REQUIRED: "true"
+    volumes:
+      - hub-data:/data
+    ports:
+      - "${HUB_PORT:-17311}:1731"
+    depends_on:
+      celld-deployer:
+        condition: service_completed_successfully
+    networks: [celld]
+
 networks:
   celld: {}
 
@@ -134,3 +157,4 @@ volumes:
   minio-data: {}
   celld-a-state: {}
   celld-b-state: {}
+  hub-data: {}
