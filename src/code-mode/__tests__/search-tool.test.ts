@@ -21,7 +21,7 @@ describe("thoughtbox_search", () => {
     });
     const output = JSON.parse(result.content[0].text);
     expect(output.error).toBeUndefined();
-    expect(output.result).toHaveLength(35);
+    expect(output.result).toHaveLength(40);
     expect(output.result).toContain("register");
     expect(output.result).toContain("record_decision");
     expect(output.result).toContain("create_workspace");

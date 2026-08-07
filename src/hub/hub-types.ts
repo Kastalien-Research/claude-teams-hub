@@ -247,7 +247,13 @@ export type HubOperation =
   | 'challenge_assumption'
   | 'supersede_decision'
   | 'record_outcome'
-  | 'consult_decisions';
+  | 'consult_decisions'
+  // Coordination (celld-backed workspaces only — RFC 0001)
+  | 'declare_work_intent'
+  | 'record_work_change'
+  | 'list_impacts'
+  | 'acknowledge_impact'
+  | 'read_workspace_events';
 
 // =============================================================================
 // Progressive Disclosure Stages (from ADR Section 6)
@@ -281,6 +287,13 @@ export const STAGE_OPERATIONS: Record<DisclosureStage, HubOperation[]> = {
     'mark_consensus', 'endorse_consensus', 'list_consensus',
     'post_message', 'read_channel', 'post_system_message',
     'workspace_status', 'workspace_digest',
+    // Coordination (celld-backed workspaces only — RFC 0001). Stage 2 like
+    // every other workspace-scoped operation: they need membership, checked
+    // against the SAME workspaceId the cell is keyed on. On a filesystem
+    // workspace the handler rejects them with OPERATION_REQUIRES_CELLD_BACKEND
+    // before any storage call.
+    'declare_work_intent', 'record_work_change', 'list_impacts',
+    'acknowledge_impact', 'read_workspace_events',
   ],
 };
 

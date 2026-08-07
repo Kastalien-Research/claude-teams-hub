@@ -48,6 +48,11 @@ export const HUB_SDK_METHODS: Record<string, string> = {
   supersedeDecision: "supersede_decision",
   recordOutcome: "record_outcome",
   consultDecisions: "consult_decisions",
+  declareWorkIntent: "declare_work_intent",
+  recordWorkChange: "record_work_change",
+  listImpacts: "list_impacts",
+  acknowledgeImpact: "acknowledge_impact",
+  readWorkspaceEvents: "read_workspace_events",
 };
 
 /**

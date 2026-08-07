@@ -2,6 +2,10 @@ import type { AddressInfo } from "node:net";
 import express from "express";
 import { describe, expect, it, vi } from "vitest";
 import { createHubApiSurface, shouldWarnOnExposedLocalMode } from "../hub-http.js";
+// The surface now takes a HubReadSurface; wrapping the storage stub with the
+// real filesystem read model keeps these tests exercising the actual
+// assembly logic (joinAgents, channel derivation) rather than a test double.
+import { createHubReadModel } from "../../celld/read-model.js";
 import type { HubHandler } from "../../hub/hub-handler.js";
 import type {
   AgentIdentity,
@@ -128,7 +132,7 @@ async function withServer(
 ): Promise<void> {
   const app = express();
   app.use(express.json());
-  createHubApiSurface(stubHandler, storage).mount(app);
+  createHubApiSurface(stubHandler, createHubReadModel({ hubStorage: storage })).mount(app);
 
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", () => resolve()));
@@ -146,7 +150,7 @@ describe("hub API surface", () => {
     const app = express();
     app.use(express.json());
 
-    createHubApiSurface(stubHandler, makeStorage()).mount(app);
+    createHubApiSurface(stubHandler, createHubReadModel({ hubStorage: makeStorage() })).mount(app);
 
     const routes = listRoutes(app);
     expect(routes).toContain("/hub/api");

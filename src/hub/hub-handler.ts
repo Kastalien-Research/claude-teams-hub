@@ -39,7 +39,7 @@ type ThoughtStore = ThoughtStoreForWorkspace & {
  * (agent_registered); the event stream delivers those to every client.
  */
 export interface HubEvent {
-  type: 'problem_created' | 'problem_status_changed' | 'message_posted' | 'proposal_created' | 'proposal_merged' | 'consensus_marked' | 'workspace_created' | 'agent_registered' | 'workspace_joined' | 'problem_claimed' | 'proposal_reviewed' | 'decision_recorded' | 'decision_superseded' | 'assumption_recorded' | 'assumption_challenged' | 'outcome_recorded';
+  type: 'problem_created' | 'problem_status_changed' | 'message_posted' | 'proposal_created' | 'proposal_merged' | 'consensus_marked' | 'workspace_created' | 'agent_registered' | 'workspace_joined' | 'problem_claimed' | 'proposal_reviewed' | 'decision_recorded' | 'decision_superseded' | 'assumption_recorded' | 'assumption_challenged' | 'outcome_recorded' | 'work_intent_declared' | 'work_change_recorded' | 'impact_detected' | 'impact_acknowledged';
   workspaceId: string;
   data: Record<string, unknown>;
 }
@@ -74,6 +74,23 @@ function getDisclosureStage(operation: string): DisclosureStage {
   if ((STAGE_OPERATIONS[0] as string[]).includes(operation)) return 0;
   if ((STAGE_OPERATIONS[1] as string[]).includes(operation)) return 1;
   return 2;
+}
+
+/**
+ * The five coordination operations (RFC 0001) exist only on celld-backed
+ * workspaces — this filesystem HubHandler has no cell, so every one of them
+ * is refused here before any storage or manager call runs. `src/hub` must
+ * not import `src/celld` (an architecture test enforces this), so the error
+ * carries the stable code and retryability as plain properties rather than a
+ * shared celld error class.
+ */
+function celldBackendRequiredError(operation: string): Error {
+  const err = new Error(
+    `[OPERATION_REQUIRES_CELLD_BACKEND] '${operation}' is a coordination operation ` +
+      "(RFC 0001) that only runs on a celld-backed workspace. This workspace uses " +
+      "filesystem storage — create it with backend: 'celld' to use this operation.",
+  );
+  return Object.assign(err, { code: 'OPERATION_REQUIRES_CELLD_BACKEND', retryable: false });
 }
 
 /** Operations that require workspace membership check */
@@ -567,6 +584,16 @@ export function createHubHandler(
               problemSummary,
             };
           }
+          // Coordination (celld-backed workspaces only — RFC 0001). This
+          // handler has no cell: every one of the five throws immediately,
+          // before any storage or manager call, on every filesystem
+          // workspace regardless of args.
+          case 'declare_work_intent':
+          case 'record_work_change':
+          case 'list_impacts':
+          case 'acknowledge_impact':
+          case 'read_workspace_events':
+            throw celldBackendRequiredError(operation);
           default:
             throw new Error(`Unknown operation: ${operation}`);
         }

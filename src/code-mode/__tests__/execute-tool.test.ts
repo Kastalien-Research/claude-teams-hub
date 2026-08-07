@@ -6,8 +6,11 @@ import {
   ExecuteTool,
   EXECUTE_TOOL,
   executeToolInputSchema,
+  unwrapHubResult,
   type ExecuteToolDeps,
 } from "../execute-tool.js";
+import type { HubToolResult } from "../../hub/hub-tool-handler.js";
+import { CelldError } from "../../celld/errors.js";
 import { ThoughtTool } from "../../thought/tool.js";
 import { SessionTool } from "../../sessions/tool.js";
 import { ThoughtHandler } from "../../thought-handler.js";
@@ -707,5 +710,133 @@ describe("thoughtbox_execute — submission contract", () => {
     });
     const output = JSON.parse(result.content[0].text);
     expect(output.error).toBe("boom");
+  });
+});
+
+describe("unwrapHubResult error-code propagation (RFC 0001 §Error codes)", () => {
+  function errorResult(body: Record<string, unknown>): HubToolResult {
+    return {
+      content: [{ type: "text", text: JSON.stringify(body) }],
+      isError: true,
+    };
+  }
+
+  function successResult(body: Record<string, unknown>): HubToolResult {
+    return {
+      content: [{ type: "text", text: JSON.stringify(body) }],
+    };
+  }
+
+  describe("existing behavior pin (no code)", () => {
+    it("rethrows exactly the original message with no code property", () => {
+      let caught: unknown;
+      try {
+        unwrapHubResult(errorResult({ error: "Unknown agent 'x'" }));
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toBe("Unknown agent 'x'");
+      expect("code" in (caught as Error)).toBe(false);
+      expect("retryable" in (caught as Error)).toBe(false);
+      expect("details" in (caught as Error)).toBe(false);
+    });
+  });
+
+  describe("new behavior (code present)", () => {
+    it("prefixes the message with [code] and attaches code/retryable/details for a plain coded body", () => {
+      let caught: unknown;
+      try {
+        unwrapHubResult(
+          errorResult({
+            error: "claim race lost",
+            code: "PROBLEM_ALREADY_CLAIMED",
+            retryable: false,
+            details: { problemId: "prob-1" },
+          }),
+        );
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const err = caught as Error & { code?: string; retryable?: boolean; details?: unknown };
+      expect(err.message).toBe("[PROBLEM_ALREADY_CLAIMED] claim race lost");
+      expect(err.code).toBe("PROBLEM_ALREADY_CLAIMED");
+      expect(err.retryable).toBe(false);
+      expect(err.details).toEqual({ problemId: "prob-1" });
+    });
+
+    it("does not double-prefix when the CelldError message already carries [code]", () => {
+      // CelldError's own message is "[CODE] human message" (src/celld/errors.ts).
+      // hub-tool-handler serializes it verbatim as `error`, so unwrapHubResult
+      // must recognize the existing prefix rather than prepending a second one.
+      const celldErr = new CelldError({
+        code: "REVISION_CONFLICT",
+        message: "stale revision",
+        retryable: false,
+      });
+      expect(celldErr.message).toBe("[REVISION_CONFLICT] stale revision");
+
+      let caught: unknown;
+      try {
+        unwrapHubResult(
+          errorResult({
+            error: celldErr.message,
+            code: celldErr.code,
+            retryable: celldErr.retryable,
+          }),
+        );
+      } catch (err) {
+        caught = err;
+      }
+      const err = caught as Error & { code?: string; retryable?: boolean };
+      expect(err.message).toBe("[REVISION_CONFLICT] stale revision");
+      expect(err.message.match(/\[REVISION_CONFLICT\]/g)).toHaveLength(1);
+      expect(err.code).toBe("REVISION_CONFLICT");
+      expect(err.retryable).toBe(false);
+    });
+
+    it("omits retryable/details on the rethrown error when absent from the body", () => {
+      let caught: unknown;
+      try {
+        unwrapHubResult(errorResult({ error: "not found", code: "NOT_FOUND" }));
+      } catch (err) {
+        caught = err;
+      }
+      const err = caught as Error & { code?: string; retryable?: boolean; details?: unknown };
+      expect(err.message).toBe("[NOT_FOUND] not found");
+      expect(err.code).toBe("NOT_FOUND");
+      expect("retryable" in err).toBe(false);
+      expect("details" in err).toBe(false);
+    });
+  });
+
+  describe("success passthrough", () => {
+    it("passes a coordination field through unmodified", () => {
+      const parsed = unwrapHubResult(
+        successResult({
+          problemId: "prob-1",
+          coordination: {
+            backend: "celld",
+            commandId: "cmd-1",
+            revision: 3,
+            replayed: false,
+            firstEventSequence: 10,
+            lastEventSequence: 11,
+          },
+        }),
+      );
+      expect(parsed).toEqual({
+        problemId: "prob-1",
+        coordination: {
+          backend: "celld",
+          commandId: "cmd-1",
+          revision: 3,
+          replayed: false,
+          firstEventSequence: 10,
+          lastEventSequence: 11,
+        },
+      });
+    });
   });
 });

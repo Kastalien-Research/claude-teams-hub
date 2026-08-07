@@ -1,12 +1,39 @@
 /**
  * Operations Catalog for Hub Toolhost
  *
- * Defines all 35 hub operations organized by category with stage metadata.
+ * Defines all 40 hub operations organized by category with stage metadata.
  * Includes hub vocabulary for agent onboarding.
  */
 
 import { REVIEW_VERDICTS } from './hub-types.js';
 import { EXPECTATION_ASSESSMENTS } from './decision-types.js';
+
+// =============================================================================
+// Command metadata (RFC 0001) — celld-backed workspaces only
+// =============================================================================
+
+/**
+ * CommandMetadataV1 (docs/rfcs/0001-celld-workspace-canary.md). Caller-facing
+ * idempotent command metadata: `id` is the caller-chosen key a celld cell
+ * dedupes on, so a retry after a transport-ambiguous timeout is provably the
+ * same command rather than a silent duplicate. Ignored on filesystem
+ * workspaces — those operations have no celld command envelope to fill.
+ */
+const COMMAND_METADATA_SCHEMA = {
+  type: "object",
+  description: "celld-backed workspaces only: idempotent command metadata (RFC 0001).",
+  properties: {
+    id: { type: "string", description: "Caller-chosen idempotency key. Retries MUST reuse the same id and payload; a reused id with a different payload is rejected (IDEMPOTENCY_KEY_REUSED)." },
+    expectedRevision: { type: "number", description: "Aggregate revision this command expects. A mismatch is rejected (REVISION_CONFLICT) rather than applied against stale state." },
+    teamRunId: { type: "string" },
+    nativeTaskId: { type: "string" },
+    processRunId: { type: "string" },
+    promptVersion: { type: "string" },
+    correlationId: { type: "string" },
+    causationId: { type: "string" },
+  },
+  required: ["id"],
+};
 
 export interface OperationDefinition {
   name: string;
@@ -33,6 +60,7 @@ export const HUB_VOCABULARY = {
   decision: "A durable choice about a scope (a module or path), recorded with its rationale, the alternatives rejected, and evidence a reader can check. Decisions are hub-global, not workspace-scoped, and append-only: a decision that turns out wrong is retired with supersede_decision, which writes a NEW record pointing at the old one. Nothing is ever edited in place, and no decision carries a confidence or probability.",
   assumption: "A belief a decision rests on, recorded separately so it can be challenged independently. Status is never stored — it is derived: an assumption is 'challenged' once any challenge exists, 'proposed' otherwise. Challenging one surfaces the flag 'rests-on-challenged-assumption' on every decision linked to it, which is how a fired reversal condition reaches the decisions it invalidates.",
   outcome: "Raw observed facts about what a decision actually produced, recorded after the fact. `data` holds measurements only, never a verdict; the optional `expectationAssessment` ('consistent' | 'contradicts' | 'unclear') is a separate categorical adjudication kept apart from the data so a reader can check one against the other.",
+  coordination: "A celld-backed workspace (RFC 0001, canary; opt in via create_workspace({ backend: 'celld' })) routes atomic, idempotent claims, work-intent declarations, and impact detection through one WorkspaceCell — proving competing-claim safety, durable targeted impact delivery, and owner-failure recovery without filesystem fallback. A work intent (declare_work_intent) names the scopes and contracts an agent is about to touch; record_work_change matches a change against every OTHER agent's active intents and produces an impact (blocking or advisory) that must be acknowledged (acknowledge_impact) before a blocking-impacted problem can complete. read_workspace_events is the durable replay authority — SSE is only an ephemeral hint, deduped by eventId. These five operations are rejected with OPERATION_REQUIRES_CELLD_BACKEND on a filesystem workspace.",
 };
 
 // =============================================================================
@@ -135,7 +163,7 @@ const AGENT_OPERATIONS: OperationDefinition[] = [
   {
     name: "create_workspace",
     title: "Create Workspace",
-    description: "Create a new collaboration workspace. The creating agent becomes the coordinator.",
+    description: "Create a new collaboration workspace. The creating agent becomes the coordinator. Pass backend: 'celld' to route this workspace's coordination through a celld WorkspaceCell (RFC 0001, canary) instead of filesystem storage — the default. Only celld-backed workspaces can use the coordination operations (declare_work_intent, record_work_change, list_impacts, acknowledge_impact, read_workspace_events).",
     category: "agent",
     stage: 1,
     inputSchema: {
@@ -149,6 +177,12 @@ const AGENT_OPERATIONS: OperationDefinition[] = [
           type: "string",
           description: "Workspace purpose and scope",
         },
+        backend: {
+          type: "string",
+          enum: ["filesystem", "celld"],
+          description: "Coordination backend for this workspace. Defaults to 'filesystem'. 'celld' (RFC 0001 canary) is the only opt-in gate for the coordination operations.",
+        },
+        command: COMMAND_METADATA_SCHEMA,
       },
       required: ["name", "description"],
     },
@@ -170,6 +204,7 @@ const AGENT_OPERATIONS: OperationDefinition[] = [
           type: "string",
           description: "ID of the workspace to join",
         },
+        command: COMMAND_METADATA_SCHEMA,
       },
       required: ["workspaceId"],
     },
@@ -232,6 +267,7 @@ const PROBLEM_OPERATIONS: OperationDefinition[] = [
         workspaceId: { type: "string", description: "Workspace ID" },
         title: { type: "string", description: "Problem title" },
         description: { type: "string", description: "Detailed problem description" },
+        command: COMMAND_METADATA_SCHEMA,
       },
       required: ["workspaceId", "title", "description"],
     },
@@ -253,6 +289,7 @@ const PROBLEM_OPERATIONS: OperationDefinition[] = [
         workspaceId: { type: "string", description: "Workspace ID" },
         problemId: { type: "string", description: "Problem ID to claim" },
         branchId: { type: "string", description: "Optional thought branch name (auto-generated if omitted)" },
+        command: COMMAND_METADATA_SCHEMA,
       },
       required: ["workspaceId", "problemId"],
     },
@@ -274,6 +311,7 @@ const PROBLEM_OPERATIONS: OperationDefinition[] = [
         problemId: { type: "string", description: "Problem ID" },
         status: { type: "string", enum: ["open", "in-progress", "resolved", "closed"], description: "New status" },
         resolution: { type: "string", description: "Resolution summary (for resolved/closed)" },
+        command: COMMAND_METADATA_SCHEMA,
       },
       required: ["workspaceId", "problemId", "status"],
     },
@@ -581,6 +619,7 @@ const CHANNEL_OPERATIONS: OperationDefinition[] = [
             branchId: { type: "string" },
           },
         },
+        command: COMMAND_METADATA_SCHEMA,
       },
       required: ["workspaceId", "problemId", "content"],
     },
@@ -892,6 +931,140 @@ const DECISION_OPERATIONS: OperationDefinition[] = [
   },
 ];
 
+/**
+ * Coordination — celld-backed workspaces only (docs/rfcs/0001-celld-workspace-canary.md).
+ * Stage 2, like every other workspace-scoped operation: all five require
+ * workspaceId and membership. On a FILESYSTEM workspace every one of them is
+ * rejected with OPERATION_REQUIRES_CELLD_BACKEND before any storage call —
+ * there is no record-level adapter, because claims, membership, work
+ * intents, impacts, and events must commit together inside one cell
+ * transaction (the RFC's rejected-alternatives rationale).
+ */
+const COORDINATION_OPERATIONS: OperationDefinition[] = [
+  {
+    name: "declare_work_intent",
+    title: "Declare Work Intent",
+    description: "Requires a celld-backed workspace (RFC 0001, canary). Declares the scopes and contracts an agent is about to touch while working a problem, so record_work_change can detect impacts on other agents' live work. Sets a lease (leaseUntil) after which the intent is treated as expired for matching purposes. Rejected with OPERATION_REQUIRES_CELLD_BACKEND on a filesystem workspace.",
+    category: "coordination",
+    stage: 2,
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID — must be celld-backed" },
+        problemId: { type: "string", description: "Problem this work intent is declared for" },
+        readScopes: { type: "array", items: { type: "string" }, description: "Slash-separated paths this work will read, e.g. 'src/hub/hub-types.ts'" },
+        writeScopes: { type: "array", items: { type: "string" }, description: "Slash-separated paths this work will write" },
+        contractRefs: { type: "array", items: { type: "string" }, description: "Contract identifiers this work depends on (matched by exact string equality)" },
+        assumptionIds: { type: "array", items: { type: "string" }, description: "Decision-ledger assumption ids this work rests on (matched by exact string equality)" },
+        branchId: { type: "string", description: "Optional thought branch containing the work" },
+        leaseUntil: { type: "string", description: "ISO 8601 timestamp after which this intent is treated as expired for impact matching" },
+        command: COMMAND_METADATA_SCHEMA,
+      },
+      required: ["workspaceId", "problemId", "leaseUntil"],
+    },
+    example: {
+      workspaceId: "ws-abc123",
+      problemId: "prob-001",
+      writeScopes: ["src/hub/hub-types.ts"],
+      contractRefs: ["docs/rfcs/0001-celld-workspace-canary.md#hub-command-v1"],
+      leaseUntil: "2026-08-06T18:00:00.000Z",
+    },
+  },
+  {
+    name: "record_work_change",
+    title: "Record Work Change",
+    description: "Requires a celld-backed workspace (RFC 0001, canary). Records a change (a file edit, an interface change, a decision) and matches it against every other agent's active, unexpired work intents on this workspace, excluding the change's own author. A match on scope (exact, ancestor, or descendant at segment boundaries), contractRefs, or assumptionIds produces an impact — 'blocking' or 'advisory' per severity — delivered to the matched agent via list_impacts / read_workspace_events. Rejected with OPERATION_REQUIRES_CELLD_BACKEND on a filesystem workspace.",
+    category: "coordination",
+    stage: 2,
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID — must be celld-backed" },
+        kind: { type: "string", description: "Free-form category of change, e.g. 'interface-rename', 'contract-change'" },
+        summary: { type: "string", description: "What changed, for the impacted agent to read" },
+        scopes: { type: "array", items: { type: "string" }, description: "Slash-separated paths this change touches" },
+        contractRefs: { type: "array", items: { type: "string" }, description: "Contract identifiers this change affects" },
+        assumptionIds: { type: "array", items: { type: "string" }, description: "Decision-ledger assumption ids this change bears on" },
+        severity: { type: "string", enum: ["blocking", "advisory"], description: "'blocking' impacts must be acknowledged before the matched agent's problem can complete (update_problem to resolved/closed)" },
+        command: COMMAND_METADATA_SCHEMA,
+      },
+      required: ["workspaceId", "kind", "summary", "severity"],
+    },
+    example: {
+      workspaceId: "ws-abc123",
+      kind: "interface-rename",
+      summary: "HubOperation gained five coordination members; STAGE_OPERATIONS[2] extended to match",
+      scopes: ["src/hub/hub-types.ts"],
+      severity: "blocking",
+    },
+  },
+  {
+    name: "list_impacts",
+    title: "List Impacts",
+    description: "Requires a celld-backed workspace (RFC 0001, canary). Lists impacts detected by record_work_change, optionally filtered to a target agent and/or status. Read-only. Rejected with OPERATION_REQUIRES_CELLD_BACKEND on a filesystem workspace.",
+    category: "coordination",
+    stage: 2,
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID — must be celld-backed" },
+        targetAgentId: { type: "string", description: "Filter to impacts targeting this agent" },
+        status: { type: "string", enum: ["pending", "acknowledged"], description: "Filter by acknowledgement status" },
+      },
+      required: ["workspaceId"],
+    },
+    example: {
+      workspaceId: "ws-abc123",
+      status: "pending",
+    },
+  },
+  {
+    name: "acknowledge_impact",
+    title: "Acknowledge Impact",
+    description: "Requires a celld-backed workspace (RFC 0001, canary). Records a disposition on an impact — 'accepted' (the change affects this work; it will adapt) or 'not_applicable' (the match was a false positive). Acknowledgement is durable and must precede completing a problem with an unacknowledged blocking impact against it (update_problem to resolved/closed otherwise rejects with BLOCKING_IMPACT_UNACKNOWLEDGED). Rejected with OPERATION_REQUIRES_CELLD_BACKEND on a filesystem workspace.",
+    category: "coordination",
+    stage: 2,
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID — must be celld-backed" },
+        impactId: { type: "string", description: "Impact to acknowledge, from list_impacts or read_workspace_events" },
+        disposition: { type: "string", enum: ["accepted", "not_applicable"], description: "'accepted' if the change affects this work; 'not_applicable' if the match was a false positive" },
+        note: { type: "string", description: "Optional context for the reader" },
+        command: COMMAND_METADATA_SCHEMA,
+      },
+      required: ["workspaceId", "impactId", "disposition"],
+    },
+    example: {
+      workspaceId: "ws-abc123",
+      impactId: "impact-001",
+      disposition: "accepted",
+      note: "Rebasing onto the renamed interface before merging",
+    },
+  },
+  {
+    name: "read_workspace_events",
+    title: "Read Workspace Events",
+    description: "Requires a celld-backed workspace (RFC 0001, canary). Replays the cell's durable event journal from a cursor — the authority for coordination state, not the SSE stream (SSE is an ephemeral notification hint only; a commit-before-reply retry can legitimately rebroadcast the same event IDs, so consumers must dedupe by eventId). Sequences are unique, increasing, and gap-free. Rejected with OPERATION_REQUIRES_CELLD_BACKEND on a filesystem workspace.",
+    category: "coordination",
+    stage: 2,
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID — must be celld-backed" },
+        after: { type: "number", description: "Journal sequence to read after (exclusive). Default 0 — read from the start." },
+        limit: { type: "number", description: "Maximum events to return. Default 100." },
+      },
+      required: ["workspaceId"],
+    },
+    example: {
+      workspaceId: "ws-abc123",
+      after: 0,
+      limit: 100,
+    },
+  },
+];
+
 // =============================================================================
 // Combined Operations
 // =============================================================================
@@ -905,6 +1078,7 @@ export const HUB_OPERATIONS: OperationDefinition[] = [
   ...CHANNEL_OPERATIONS,
   ...STATUS_OPERATIONS,
   ...DECISION_OPERATIONS,
+  ...COORDINATION_OPERATIONS,
 ];
 
 /**
@@ -985,6 +1159,11 @@ export function getOperationsCatalog(): string {
           name: "decisions",
           stage: 1,
           description: "Record and consult durable decisions, assumptions, and outcome evidence (hub-global)",
+        },
+        {
+          name: "coordination",
+          stage: 2,
+          description: "Declare work intent, detect and acknowledge impacts, and replay the durable event journal — celld-backed workspaces only (RFC 0001, canary)",
         },
       ],
     },
