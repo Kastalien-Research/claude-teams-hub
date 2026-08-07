@@ -21,7 +21,11 @@ export type HubEventType =
   | 'decision_superseded'
   | 'assumption_recorded'
   | 'assumption_challenged'
-  | 'outcome_recorded';
+  | 'outcome_recorded'
+  | 'work_intent_declared'
+  | 'work_change_recorded'
+  | 'impact_detected'
+  | 'impact_acknowledged';
 
 /**
  * Events bridged from the in-process ThoughtEmitter. One type covers all three

@@ -25,6 +25,10 @@ import {
   type ThoughtStoreAdapter,
 } from "./hub/thought-store-adapter.js";
 import { createHubApiSurface, shouldWarnOnExposedLocalMode } from "./http/hub-http.js";
+import { createCelldClient } from "./celld/client.js";
+import { createBackendRegistry } from "./celld/backend-registry.js";
+import { createRoutedHubHandler } from "./celld/routed-handler.js";
+import { createHubReadModel } from "./celld/read-model.js";
 import { createEventStreamSurface } from "./http/event-stream.js";
 import { DASHBOARD_HTML } from "./http/dashboard.js";
 import { thoughtEmitter } from "./events/thought-emitter.js";
@@ -174,6 +178,47 @@ async function startHttpServer() {
   thoughtEmitter.on('thought:revised', bridgeThought('revised'));
   thoughtEmitter.on('thought:branched', bridgeThought('branched'));
 
+  // Celld composition (RFC 0001): ONE process-shared filesystem handler.
+  // When HUB_CELLD_ENDPOINTS is configured, wrap it in the routed handler so
+  // every MCP session and /hub/api share one routing view; filesystem
+  // workspaces flow through unchanged and an active celld route never falls
+  // back. The registry file lives beside the hub data it routes.
+  const filesystemHubHandler = createHubHandler(
+    hubStorage,
+    localHubThoughtStore,
+    broadcastHubEvent,
+  );
+  const celldEndpoints = (process.env.HUB_CELLD_ENDPOINTS ?? "")
+    .split(",")
+    .map((endpoint) => endpoint.trim())
+    .filter((endpoint) => endpoint.length > 0);
+  if ((process.env.HUB_CELLD_REQUIRED ?? "").toLowerCase() === "true" && celldEndpoints.length === 0) {
+    throw new Error(
+      "HUB_CELLD_REQUIRED=true but HUB_CELLD_ENDPOINTS is empty — refusing to start without a celld route",
+    );
+  }
+  let sharedHubHandler = filesystemHubHandler;
+  let hubReadModel = createHubReadModel({ hubStorage });
+  if (celldEndpoints.length > 0) {
+    const celldTransport = createCelldClient({
+      endpoints: celldEndpoints,
+      timeoutMs: parseInt(process.env.HUB_CELLD_REQUEST_TIMEOUT_MS || "10000", 10),
+    });
+    const backendRegistry = createBackendRegistry(dataDir);
+    sharedHubHandler = createRoutedHubHandler({
+      inner: filesystemHubHandler,
+      transport: celldTransport,
+      registry: backendRegistry,
+      onEvent: broadcastHubEvent,
+    });
+    hubReadModel = createHubReadModel({
+      hubStorage,
+      registry: backendRegistry,
+      transport: celldTransport,
+    });
+    console.error(`[celld] Workspace routing enabled via ${celldEndpoints.join(", ")}`);
+  }
+
   app.all("/mcp", async (req: Request, res: Response) => {
     const mcpSessionId = req.headers["mcp-session-id"] as string | undefined;
 
@@ -197,6 +242,7 @@ async function startHttpServer() {
         storage: factory.getStorage(),
         hubStorage,
         hubThoughtStore: localHubThoughtStore,
+        hubHandler: sharedHubHandler,
         dataDir,
         workspaceId: LOCAL_WORKSPACE_ID,
         onHubEvent: broadcastHubEvent,
@@ -264,15 +310,10 @@ async function startHttpServer() {
   });
 
   // Hub HTTP surface (`POST /hub/api`) for non-MCP clients, plus the SSE
-  // event stream (`GET /events`). The hub handler's thought store is the same
-  // shared adapter the MCP sessions use, so hub-created sessions and
-  // merge_proposal synthesis thoughts genuinely persist.
-  const hubHandler = createHubHandler(
-    hubStorage,
-    localHubThoughtStore,
-    broadcastHubEvent,
-  );
-  createHubApiSurface(hubHandler, hubStorage).mount(app);
+  // event stream (`GET /events`). The handler is the SAME shared (possibly
+  // celld-routed) instance the MCP sessions use, and the two read-only GET
+  // endpoints go through the read model so celld workspaces are visible.
+  createHubApiSurface(sharedHubHandler, hubReadModel).mount(app);
   eventStream.mount(app);
 
   const httpServer = app.listen(port, () => {

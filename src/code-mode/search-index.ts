@@ -234,6 +234,55 @@ export const CATALOG_ANNOTATIONS: Record<string, CatalogAnnotation> = {
     ],
     relatedOps: ["hub.read_channel", "hub.post_system_message"],
   },
+  "hub.declare_work_intent": {
+    whenToUse:
+      "Requires a celld-backed workspace (RFC 0001). Declare the scopes and contracts you are about to touch BEFORE editing, so a teammate's record_work_change can detect a conflict with your live work instead of silently overwriting an assumption you both depend on. leaseUntil is required — the intent stops matching once it expires.",
+    commonMistakes: [
+      "declaring intent after the edit instead of before it — the impact detector only matches against ACTIVE intents at the time of record_work_change",
+      "omitting leaseUntil or setting it too short, so the intent expires mid-task and later changes stop matching",
+      "calling this on a filesystem workspace — it always rejects with OPERATION_REQUIRES_CELLD_BACKEND",
+    ],
+    relatedOps: ["hub.record_work_change", "hub.list_impacts", "hub.read_workspace_events"],
+  },
+  "hub.record_work_change": {
+    whenToUse:
+      "Requires a celld-backed workspace (RFC 0001). Record a change once it happens so every OTHER agent with a matching active work intent gets an impact. Set severity 'blocking' only when the matched agent's work cannot safely complete without acknowledging it — blocking impacts gate update_problem to resolved/closed.",
+    commonMistakes: [
+      "marking every change 'blocking' — advisory is the default posture; reserve blocking for changes that make the matched agent's in-flight work actually wrong",
+      "expecting a change to notify its own author — the author is excluded from matching by design",
+      "calling this on a filesystem workspace — it always rejects with OPERATION_REQUIRES_CELLD_BACKEND",
+    ],
+    relatedOps: ["hub.declare_work_intent", "hub.list_impacts", "hub.acknowledge_impact"],
+  },
+  "hub.list_impacts": {
+    whenToUse:
+      "Requires a celld-backed workspace (RFC 0001). Poll or check before completing a problem to see whether any pending blocking impact targets you. read_workspace_events is the durable replay authority; this is the filtered, read-only view.",
+    commonMistakes: [
+      "treating an empty result as proof no impact exists rather than re-checking after each record_work_change from a teammate",
+      "calling this on a filesystem workspace — it always rejects with OPERATION_REQUIRES_CELLD_BACKEND",
+    ],
+    relatedOps: ["hub.record_work_change", "hub.acknowledge_impact", "hub.read_workspace_events"],
+  },
+  "hub.acknowledge_impact": {
+    whenToUse:
+      "Requires a celld-backed workspace (RFC 0001). Must precede completing a problem with a blocking impact — update_problem to resolved/closed rejects with BLOCKING_IMPACT_UNACKNOWLEDGED otherwise. Use disposition 'not_applicable' for a false-positive match rather than ignoring it; ignoring it still blocks completion.",
+    commonMistakes: [
+      "ignoring an advisory impact and assuming it never blocks anything — only 'blocking' severity gates completion, but advisory impacts are still real signals to read",
+      "completing the problem first and acknowledging after — the gate checks BEFORE the status transition, not after",
+      "calling this on a filesystem workspace — it always rejects with OPERATION_REQUIRES_CELLD_BACKEND",
+    ],
+    relatedOps: ["hub.list_impacts", "hub.record_work_change", "hub.update_problem"],
+  },
+  "hub.read_workspace_events": {
+    whenToUse:
+      "Requires a celld-backed workspace (RFC 0001). This is the replay authority for coordination state — not the SSE stream, which is only an ephemeral notification hint. A commit-before-reply retry can legitimately rebroadcast the same event IDs, so dedupe by eventId. Page forward with after: <lastEventSequence> from the previous call.",
+    commonMistakes: [
+      "treating an SSE notification as durable state instead of a hint to come read here",
+      "re-processing an event whose eventId was already seen, instead of deduping — retries can legitimately rebroadcast",
+      "calling this on a filesystem workspace — it always rejects with OPERATION_REQUIRES_CELLD_BACKEND",
+    ],
+    relatedOps: ["hub.list_impacts", "hub.declare_work_intent", "hub.record_work_change"],
+  },
 };
 
 function formatAnnotation(annotation: CatalogAnnotation): string {

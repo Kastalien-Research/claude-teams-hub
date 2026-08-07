@@ -171,11 +171,11 @@ describe("static catalog single-registry (drift guard)", () => {
  * reading the single HUB_SDK_METHODS map.
  */
 describe("hub catalog entries name their callable (discovery/execute parity)", () => {
-  it("every one of the 35 hub operations carries an sdkMethod", () => {
+  it("every one of the 40 hub operations carries an sdkMethod", () => {
     const hub = buildSearchCatalog().operations["hub"]!;
     const names = Object.keys(hub);
-    expect(names).toHaveLength(35);
-    expect(HUB_OPERATIONS).toHaveLength(35);
+    expect(names).toHaveLength(40);
+    expect(HUB_OPERATIONS).toHaveLength(40);
 
     const missing = names.filter((name) => !hub[name]!.sdkMethod);
     expect(missing).toEqual([]);

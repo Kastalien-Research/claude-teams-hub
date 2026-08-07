@@ -1,57 +1,39 @@
 import type { Express, Request, Response } from "express";
 import type { HubHandler } from "../hub/hub-handler.js";
-import type {
-  AgentIdentity,
-  Channel,
-  HubStorage,
-  Workspace,
-} from "../hub/hub-types.js";
 
 export interface HubApiSurface {
   mount(app: Express): void;
 }
 
-/** A workspace member joined against the global agent registry. */
-export interface SnapshotAgent {
-  agentId: string;
-  name: string;
-  role: string;
-  status: string;
-  joinedAt: string;
-  lastSeenAt: string;
-  currentWork?: string;
-  profile?: string;
-  registeredAt?: string;
+/**
+ * Read surface behind the two read-only endpoints (RFC 0001: HubReadModel).
+ * Structural on purpose: src/http stays decoupled from src/celld — the
+ * composition layer passes in whichever implementation is wired (filesystem
+ * or celld-routed), and this module never imports either.
+ */
+export interface HubReadSurface {
+  listWorkspaces(): Promise<unknown[]>;
+  workspaceSnapshot(workspaceId: string): Promise<unknown | undefined>;
 }
 
-function joinAgents(
-  workspace: Workspace,
-  registry: AgentIdentity[],
-): SnapshotAgent[] {
-  const byId = new Map(registry.map((agent) => [agent.agentId, agent]));
-
-  return workspace.agents.map((member) => {
-    const identity = byId.get(member.agentId);
-    const joined: SnapshotAgent = {
-      agentId: member.agentId,
-      name: identity?.name ?? member.agentId,
-      role: member.role,
-      status: member.status,
-      joinedAt: member.joinedAt,
-      lastSeenAt: member.lastSeenAt,
-    };
-    if (member.currentWork !== undefined) joined.currentWork = member.currentWork;
-    if (identity?.profile !== undefined) joined.profile = identity.profile;
-    if (identity?.registeredAt !== undefined) {
-      joined.registeredAt = identity.registeredAt;
+/** Additive structured-error body (RFC 0001 §Error codes): {error} always; code/retryable/details when carried. */
+function errorBody(error: unknown): Record<string, unknown> {
+  const message = error instanceof Error ? error.message : String(error);
+  const body: Record<string, unknown> = { error: message };
+  if (error instanceof Error) {
+    const coded = error as Error & { code?: unknown; retryable?: unknown; details?: unknown };
+    if (typeof coded.code === "string") {
+      body.code = coded.code;
+      if (typeof coded.retryable === "boolean") body.retryable = coded.retryable;
+      if (typeof coded.details === "object" && coded.details !== null) body.details = coded.details;
     }
-    return joined;
-  });
+  }
+  return body;
 }
 
 export function createHubApiSurface(
   sharedHubHandler: HubHandler,
-  hubStorage: HubStorage,
+  readModel: HubReadSurface,
 ): HubApiSurface {
   function mount(app: Express): void {
     app.post("/hub/api", async (req: Request, res: Response) => {
@@ -75,24 +57,21 @@ export function createHubApiSurface(
 
         res.json(result);
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error);
-        res.status(400).json({ error: message });
+        res.status(400).json(errorBody(error));
       }
     });
 
     // The two read-only endpoints below deliberately bypass the hub's
-    // stage-gating and membership checks: they read storage directly rather
-    // than going through HubHandler, because this is a local single-trust-domain
+    // stage-gating and membership checks: this is a local single-trust-domain
     // server whose observer (the dashboard) has no agent identity to gate on.
+    // They read through the injected HubReadSurface rather than storage
+    // directly, so celld-routed workspaces appear alongside filesystem ones.
 
     app.get("/hub/workspaces", async (_req: Request, res: Response) => {
       try {
-        res.json({ workspaces: await hubStorage.listWorkspaces() });
+        res.json({ workspaces: await readModel.listWorkspaces() });
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error);
-        res.status(500).json({ error: message });
+        res.status(500).json(errorBody(error));
       }
     });
 
@@ -104,44 +83,18 @@ export function createHubApiSurface(
           // repeated segments; a single `:id` only ever produces a string.
           const rawId = req.params.id;
           const workspaceId = Array.isArray(rawId) ? String(rawId[0]) : rawId;
-          const workspace = await hubStorage.getWorkspace(workspaceId);
+          const snapshot = await readModel.workspaceSnapshot(workspaceId);
 
-          if (!workspace) {
+          if (snapshot === undefined) {
             res
               .status(404)
               .json({ error: `Workspace not found: ${workspaceId}` });
             return;
           }
 
-          const [registry, problems, proposals, consensus] = await Promise.all([
-            hubStorage.getAgents(),
-            hubStorage.listProblems(workspaceId),
-            hubStorage.listProposals(workspaceId),
-            hubStorage.listConsensusMarkers(workspaceId),
-          ]);
-
-          // Channels are keyed by problem, so the channel set is derived from
-          // the problem list rather than listed directly.
-          const channels = (
-            await Promise.all(
-              problems.map((problem) =>
-                hubStorage.getChannel(workspaceId, problem.id),
-              ),
-            )
-          ).filter((channel): channel is Channel => channel !== null);
-
-          res.json({
-            workspace,
-            agents: joinAgents(workspace, registry),
-            problems,
-            proposals,
-            consensus,
-            channels,
-          });
+          res.json(snapshot);
         } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          res.status(500).json({ error: message });
+          res.status(500).json(errorBody(error));
         }
       },
     );

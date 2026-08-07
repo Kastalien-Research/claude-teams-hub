@@ -12,8 +12,12 @@ for live observation.
 
 ## Surface
 
-- `tb.hub` — 35 operations: identity, workspaces, problems, proposals,
-  consensus, channels, status, decisions.
+- `tb.hub` — 40 operations: identity, workspaces, problems, proposals,
+  consensus, channels, status, decisions, coordination. The five coordination
+  operations (`declareWorkIntent`, `recordWorkChange`, `listImpacts`,
+  `acknowledgeImpact`, `readWorkspaceEvents`) require a celld-backed workspace
+  (`createWorkspace({ backend: "celld" })`, RFC 0001, canary) and are rejected
+  with `OPERATION_REQUIRES_CELLD_BACKEND` on the default filesystem backend.
 - `tb.thought` / `tb.session` — the thought ledger, **transitional**: kept
   because consensus markers and proposal merges anchor to thought references.
   Agents are steered toward semantic `thoughtType`s (`action_report`,
