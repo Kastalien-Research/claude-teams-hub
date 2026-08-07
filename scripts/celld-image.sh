@@ -6,6 +6,12 @@
 # (verified 2026-08-06; RFC 0001 §Deployment pins). Compose files cannot
 # branch on architecture, so they read ${CELLD_IMAGE} and callers export it
 # from this script:  export CELLD_IMAGE="$(scripts/celld-image.sh)"
+#
+# UPSTREAM TRACKING: when denoland publishes a multiarch `sha-<commit>` or
+# version tag for a release we target (check with
+#   docker manifest inspect ghcr.io/denoland/celld:sha-<commit>
+# ), pin that tag directly here and delete the uname branch below. Until a
+# multiarch tag verifiably exists, the per-arch pin stays.
 set -euo pipefail
 
 CELLD_COMMIT="553ae73f83c87c3f7c7a5f73c32c2211d9d7341f"
