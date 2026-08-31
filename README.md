@@ -27,6 +27,31 @@ for live observation.
   in the parent workspace's decisions ledger).
 - `tb.vars` — session-scoped variables.
 
+## Channel (Claude Code Channels, research preview)
+
+`src/channel/` is a one-way [Claude Code channel](https://code.claude.com/docs/en/channels)
+server that bridges the SSE `/events` stream into a live session: when another
+agent's `recordWorkChange` produces an `impact_detected` targeting this
+session's hub agent, the session is notified at its next turn boundary instead
+of at its next poll. It exposes no tools — acknowledgements go through the
+team-hub MCP server (`tb.hub.acknowledgeImpact`).
+
+Environment: `HUB_EVENTS_URL` (default `http://127.0.0.1:1731/events`),
+`HUB_CHANNEL_AGENT_ID` (targeted mode; unset = observer mode, all impacts
+forwarded), `HUB_CHANNEL_WORKSPACE_ID` (workspace filter),
+`HUB_CHANNEL_FORWARD` (comma-separated extra event types forwarded verbatim,
+e.g. `message_posted`).
+
+Register it as a stdio MCP server running `node dist/channel/index.js` (dev:
+`pnpm channel`) and launch with
+`claude --channels --dangerously-load-development-channels <name>` (custom
+channels are not on the research-preview allowlist; requires Claude Code
+v2.1.80+ with claude.ai login). Delivery is turn-gated and best-effort: the
+stream carries no event ids, so a reconnect cannot replay the gap — the
+channel pushes a `channel_reconnected` notice and `tb.hub.listImpacts` remains
+the authoritative backstop. `node scripts/channel-smoke.mjs` exercises the
+whole path against a fake SSE server over real stdio MCP.
+
 ## Decisions
 
 The decision ledger (`recordDecision`, `recordAssumption`, `challengeAssumption`,

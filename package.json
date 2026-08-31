@@ -9,6 +9,7 @@
   "packageManager": "pnpm@11.18.0",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "channel": "tsx src/channel/index.ts",
     "clean": "shx rm -rf dist",
     "build": "pnpm check:cycles && pnpm build:local",
     "build:local": "pnpm clean && tsc && shx chmod +x dist/*.js",
