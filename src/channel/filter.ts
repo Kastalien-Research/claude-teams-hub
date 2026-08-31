@@ -66,12 +66,6 @@ export function decideForward(
   return null;
 }
 
-interface MatchingReason {
-  kind: string;
-  source: string;
-  target: string;
-}
-
 function decideImpact(
   event: ThoughtboxEvent,
   config: ChannelConfig,
