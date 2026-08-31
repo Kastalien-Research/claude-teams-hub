@@ -465,6 +465,18 @@ function declareWorkIntent(state: CellWorkspaceState, command: ReducerCommand): 
   }
   const leaseUntil = str(command.payload, 'leaseUntil');
   if (isRejection(leaseUntil)) return { ok: false, rejection: leaseUntil };
+  // An unparseable lease makes `Date.parse(leaseUntil) <= now` permanently
+  // false in impact matching — the intent would never expire.
+  if (Number.isNaN(Date.parse(leaseUntil))) {
+    return {
+      ok: false,
+      rejection: rejection(
+        'VALIDATION_FAILED',
+        `leaseUntil must be a parseable ISO-8601 timestamp, got: ${leaseUntil}`,
+        { leaseUntil },
+      ),
+    };
+  }
   const readScopes = strArray(command.payload, 'readScopes');
   if (isRejection(readScopes)) return { ok: false, rejection: readScopes };
   const writeScopes = strArray(command.payload, 'writeScopes');
@@ -554,10 +566,12 @@ function recordWorkChange(state: CellWorkspaceState, command: ReducerCommand): R
   };
 
   // Match active, unexpired intents of OTHER agents. Iteration is sorted for
-  // determinism; one impact per (changeId, targetAgentId, intentGeneration),
-  // merging reasons if several intents of one agent share a generation number.
+  // determinism; one impact per intent, keyed (changeId, targetAgentId,
+  // targetProblemId, intentGeneration) — intents are stored one per
+  // (agent, problem), so keys are unique within a change and the completion
+  // gate (which filters by targetProblemId) sees every impacted problem.
   const issuedAtMs = Date.parse(command.issuedAt);
-  const impacts = new Map<string, ImpactV1>();
+  const impacts: ImpactV1[] = [];
   const intentIds = Object.keys(state.intents).sort();
   for (const id of intentIds) {
     const intent = state.intents[id] as WorkIntentV1;
@@ -583,14 +597,8 @@ function recordWorkChange(state: CellWorkspaceState, command: ReducerCommand): R
     }
     if (reasons.length === 0) continue;
 
-    const key = impactIdFor(changeId, intent.agentId, intent.generation);
-    const existing = impacts.get(key);
-    if (existing !== undefined) {
-      existing.matchingReasons.push(...reasons);
-      continue;
-    }
     const impact: ImpactV1 = {
-      impactId: key,
+      impactId: impactIdFor(changeId, intent.agentId, intent.problemId, intent.generation),
       changeId,
       targetAgentId: intent.agentId,
       targetProblemId: intent.problemId,
@@ -601,12 +609,12 @@ function recordWorkChange(state: CellWorkspaceState, command: ReducerCommand): R
       detectedAt: command.issuedAt,
     };
     if (intent.nativeTaskId !== undefined) impact.targetNativeTaskId = intent.nativeTaskId;
-    impacts.set(key, impact);
+    impacts.push(impact);
   }
 
   const next = structuredClone(state);
   next.changes[changeId] = change;
-  const sortedImpacts = [...impacts.values()].sort((a, b) => a.impactId.localeCompare(b.impactId));
+  const sortedImpacts = [...impacts].sort((a, b) => a.impactId.localeCompare(b.impactId));
   for (const impact of sortedImpacts) next.impacts[impact.impactId] = impact;
 
   const events: CellEventDraft[] = [

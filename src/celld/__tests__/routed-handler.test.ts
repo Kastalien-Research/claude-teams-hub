@@ -24,17 +24,17 @@ function memoryRegistry(initial: WorkspaceRoute[] = []): BackendRegistry & { rou
     get: async id => routes.get(id),
     list: async () => [...routes.values()],
     findByCommandId: async commandId => [...routes.values()].find(route => route.commandId === commandId),
-    beginProvisioning: async (workspaceId, commandId) => {
-      const existing = routes.get(workspaceId);
+    findOrBeginProvisioning: async (commandId, candidateWorkspaceId) => {
+      const existing = [...routes.values()].find(route => route.commandId === commandId);
       if (existing !== undefined) return existing;
       const route: WorkspaceRoute = {
-        workspaceId,
+        workspaceId: candidateWorkspaceId,
         backend: 'celld',
         status: 'provisioning',
         commandId,
         createdAt: new Date().toISOString(),
       };
-      routes.set(workspaceId, route);
+      routes.set(candidateWorkspaceId, route);
       return route;
     },
     markActive: async workspaceId => {
@@ -53,6 +53,7 @@ interface RecordedCall {
 
 function fakeTransport(overrides?: {
   commandResult?: (command: Record<string, unknown>) => CellCommandResult & { events?: unknown[] };
+  queryResult?: (operation: string, actorId: string) => CellCommandResult;
   snapshot?: CellSnapshot;
 }): CellTransport & { calls: RecordedCall[]; commands: Record<string, unknown>[] } {
   const calls: RecordedCall[] = [];
@@ -86,7 +87,14 @@ function fakeTransport(overrides?: {
     },
     async query(workspaceId, operation, actorId, payload) {
       calls.push({ kind: 'query', workspaceId, payload: { operation, actorId, payload } });
-      return { outcome: 'accepted', replayed: false, revision: 7, result: { queried: operation } };
+      return (
+        overrides?.queryResult?.(operation, actorId) ?? {
+          outcome: 'accepted',
+          replayed: false,
+          revision: 7,
+          result: { queried: operation },
+        }
+      );
     },
     async snapshot(workspaceId) {
       calls.push({ kind: 'snapshot', workspaceId });
@@ -289,6 +297,39 @@ describe('routed handler — celld path', () => {
     ).rejects.toMatchObject({ code: 'CELLD_UNAVAILABLE', retryable: true });
     expect(inner.calls).toHaveLength(0);
     expect(transport.calls).toHaveLength(0);
+  });
+
+  it('read_workspace_events authorizes membership through the cell query path before reading the journal', async () => {
+    const transport = fakeTransport();
+    const routed = createRoutedHubHandler({
+      inner: echoInner(),
+      transport,
+      registry: memoryRegistry([activeRoute]),
+    });
+    await routed.handle('agent-1', 'read_workspace_events', { workspaceId: 'ws-cell' });
+    const membershipCheck = transport.calls.find(call => call.kind === 'query');
+    expect(membershipCheck?.payload).toMatchObject({ operation: 'workspace_status', actorId: 'agent-1' });
+    expect(transport.calls.map(call => call.kind)).toEqual(['query', 'events']);
+  });
+
+  it('read_workspace_events rejects a non-member without touching the journal', async () => {
+    const transport = fakeTransport({
+      queryResult: () => ({
+        outcome: 'rejected',
+        replayed: false,
+        revision: 7,
+        rejection: { code: 'NOT_WORKSPACE_MEMBER', message: 'Agent outsider is not a member', retryable: false },
+      }),
+    });
+    const routed = createRoutedHubHandler({
+      inner: echoInner(),
+      transport,
+      registry: memoryRegistry([activeRoute]),
+    });
+    await expect(
+      routed.handle('outsider', 'read_workspace_events', { workspaceId: 'ws-cell' }),
+    ).rejects.toMatchObject({ code: 'NOT_WORKSPACE_MEMBER' });
+    expect(transport.calls.every(call => call.kind !== 'events')).toBe(true);
   });
 
   it('routes queries through transport.query and read_workspace_events through transport.events', async () => {

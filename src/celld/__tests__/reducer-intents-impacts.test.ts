@@ -286,7 +286,91 @@ describe('reducer — record_work_change impact matching', () => {
     expect(impact?.matchingReasons.map(r => r.kind).sort()).toEqual(['contractRef', 'scope']);
   });
 
-  it('impactId is deterministic: imp:<changeId>:<targetAgentId>:<intentGeneration>', () => {
+  it('rejects VALIDATION_FAILED when leaseUntil is not a parseable timestamp', () => {
+    const cell = setupWorkspace();
+    const problemId = createProblem(cell, 'alice', 'P1');
+    const outcome = cell.reject(
+      buildCommand({
+        operation: 'declare_work_intent',
+        actorId: 'bob',
+        context: { teamRunId: 'run-1' },
+        payload: { problemId, leaseUntil: 'tomorrow', writeScopes: ['x/y'] },
+      }),
+    );
+    expect(outcome.rejection.code).toBe('VALIDATION_FAILED');
+    expect(outcome.rejection.message).toContain('leaseUntil');
+  });
+
+  it('one change hitting one agent’s gen-1 intents on two problems produces two distinct impacts', () => {
+    const cell = setupWorkspace();
+    const problemA = createProblem(cell, 'alice', 'PA');
+    const problemB = createProblem(cell, 'alice', 'PB');
+    for (const problemId of [problemA, problemB]) {
+      cell.accept(
+        buildCommand({
+          operation: 'declare_work_intent',
+          actorId: 'bob',
+          context: { teamRunId: 'run-1' },
+          payload: { problemId, leaseUntil: '2099-01-01T00:00:00.000Z', writeScopes: ['x/y'] },
+        }),
+      );
+    }
+    const outcome = cell.accept(
+      buildCommand({
+        operation: 'record_work_change',
+        actorId: 'alice',
+        payload: { kind: 'refactor', summary: 's', severity: 'blocking', scopes: ['x/y'] },
+      }),
+    );
+    expect(outcome.result.impactCount).toBe(2);
+    const impactIds = outcome.result.impactIds as string[];
+    expect(new Set(impactIds).size).toBe(2);
+    const targets = impactIds
+      .map(id => (outcome.state.impacts[id] as ImpactV1).targetProblemId)
+      .sort();
+    expect(targets).toEqual([problemA, problemB].sort());
+    // Each impact carries only its own intent's matching reasons.
+    for (const id of impactIds) {
+      expect((outcome.state.impacts[id] as ImpactV1).matchingReasons).toHaveLength(1);
+    }
+  });
+
+  it('every impacted problem blocks completion until its own impact is acknowledged', () => {
+    const cell = setupWorkspace();
+    const problemA = createProblem(cell, 'alice', 'PA');
+    const problemB = createProblem(cell, 'alice', 'PB');
+    for (const problemId of [problemA, problemB]) {
+      cell.accept(
+        buildCommand({
+          operation: 'declare_work_intent',
+          actorId: 'bob',
+          context: { teamRunId: 'run-1' },
+          payload: { problemId, leaseUntil: '2099-01-01T00:00:00.000Z', writeScopes: ['x/y'] },
+        }),
+      );
+    }
+    cell.accept(
+      buildCommand({
+        operation: 'record_work_change',
+        actorId: 'alice',
+        payload: { kind: 'refactor', summary: 's', severity: 'blocking', scopes: ['x/y'] },
+      }),
+    );
+    // Pre-fix, the second problem's impact was merged into the first and PB
+    // completed without acknowledgement — the RFC 0001 invariant this pins.
+    for (const problemId of [problemA, problemB]) {
+      const outcome = cell.reject(
+        buildCommand({
+          operation: 'update_problem',
+          actorId: 'bob',
+          payload: { problemId, status: 'resolved', resolution: 'r', intentGeneration: 1 },
+        }),
+      );
+      expect(outcome.rejection.code).toBe('BLOCKING_IMPACT_UNACKNOWLEDGED');
+    }
+  });
+
+  it('impactId is deterministic: imp:<changeId>:<targetAgentId>:<targetProblemId>:<intentGeneration>', () => {
     const cell = setupWorkspace();
     const problemId = createProblem(cell, 'alice', 'P1');
     cell.accept(
@@ -305,7 +389,7 @@ describe('reducer — record_work_change impact matching', () => {
     const outcome = cell.accept(changeCommand);
     const changeId = (outcome.result.change as unknown as { changeId: string }).changeId;
     expect(changeId).toBe(`chg:${changeCommand.commandId}`);
-    const expectedImpactId = impactId(changeId, 'bob', 1);
+    const expectedImpactId = impactId(changeId, 'bob', problemId, 1);
     expect(outcome.result.impactIds).toEqual([expectedImpactId]);
     expect(outcome.state.impacts[expectedImpactId]).toBeDefined();
   });

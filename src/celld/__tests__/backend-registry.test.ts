@@ -22,10 +22,10 @@ describe('createBackendRegistry', () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  it('fresh create: beginProvisioning writes a provisioning route to disk', async () => {
+  it('fresh create: findOrBeginProvisioning writes a provisioning route to disk', async () => {
     const registry = createBackendRegistry(dataDir);
 
-    const route = await registry.beginProvisioning('ws-1', 'cmd-1');
+    const route = await registry.findOrBeginProvisioning('cmd-1', 'ws-1');
 
     expect(route).toMatchObject({
       workspaceId: 'ws-1',
@@ -43,23 +43,37 @@ describe('createBackendRegistry', () => {
     expect(onDisk).toEqual({ version: 1, routes: { 'ws-1': route } });
   });
 
-  it('same-commandId resume returns the identical route after a simulated crash', async () => {
+  it('same-commandId resume returns the identical route after a simulated crash, ignoring the new candidate id', async () => {
     const first = createBackendRegistry(dataDir);
-    const original = await first.beginProvisioning('ws-1', 'cmd-1');
+    const original = await first.findOrBeginProvisioning('cmd-1', 'ws-1');
 
     // A fresh registry instance over the same data dir simulates the
-    // process restarting after a crash — nothing is cached in memory.
+    // process restarting after a crash — nothing is cached in memory. The
+    // retry mints a NEW candidate id; the stored route must still win.
     const second = createBackendRegistry(dataDir);
-    const resumed = await second.beginProvisioning('ws-1', 'cmd-1');
+    const resumed = await second.findOrBeginProvisioning('cmd-1', 'ws-other-candidate');
 
     expect(resumed).toEqual(original);
+    expect(await second.get('ws-other-candidate')).toBeUndefined();
+  });
+
+  it('concurrent same-commandId creates resolve to ONE workspace despite distinct candidate ids', async () => {
+    const registry = createBackendRegistry(dataDir);
+
+    const [routeA, routeB] = await Promise.all([
+      registry.findOrBeginProvisioning('cmd-1', 'ws-candidate-a'),
+      registry.findOrBeginProvisioning('cmd-1', 'ws-candidate-b'),
+    ]);
+
+    expect(routeA.workspaceId).toBe(routeB.workspaceId);
+    expect((await registry.list()).length).toBe(1);
   });
 
   it('a different commandId for an already-provisioning workspace is rejected VALIDATION_FAILED', async () => {
     const registry = createBackendRegistry(dataDir);
-    await registry.beginProvisioning('ws-1', 'cmd-1');
+    await registry.findOrBeginProvisioning('cmd-1', 'ws-1');
 
-    const err = await registry.beginProvisioning('ws-1', 'cmd-2').catch((e: unknown) => e);
+    const err = await registry.findOrBeginProvisioning('cmd-2', 'ws-1').catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(CelldError);
     expect((err as CelldError).code).toBe('VALIDATION_FAILED');
@@ -73,7 +87,7 @@ describe('createBackendRegistry', () => {
 
   it('markActive transitions provisioning -> active and is idempotent once active', async () => {
     const registry = createBackendRegistry(dataDir);
-    await registry.beginProvisioning('ws-1', 'cmd-1');
+    await registry.findOrBeginProvisioning('cmd-1', 'ws-1');
 
     await registry.markActive('ws-1');
     const activated = await registry.get('ws-1');
@@ -117,10 +131,10 @@ describe('createBackendRegistry', () => {
     expect((err as Error).message).toContain(filePath);
   });
 
-  it('list() and findByCommandId() see routes created by beginProvisioning', async () => {
+  it('list() and findByCommandId() see routes created by findOrBeginProvisioning', async () => {
     const registry = createBackendRegistry(dataDir);
-    await registry.beginProvisioning('ws-1', 'cmd-1');
-    await registry.beginProvisioning('ws-2', 'cmd-2');
+    await registry.findOrBeginProvisioning('cmd-1', 'ws-1');
+    await registry.findOrBeginProvisioning('cmd-2', 'ws-2');
 
     const list = await registry.list();
     expect(list.map(r => r.workspaceId).sort()).toEqual(['ws-1', 'ws-2']);
@@ -130,12 +144,12 @@ describe('createBackendRegistry', () => {
     expect(await registry.findByCommandId('cmd-missing')).toBeUndefined();
   });
 
-  it('concurrent beginProvisioning for different workspaces both survive the serialization chain', async () => {
+  it('concurrent findOrBeginProvisioning for different commands both survive the serialization chain', async () => {
     const registry = createBackendRegistry(dataDir);
 
     const [routeA, routeB] = await Promise.all([
-      registry.beginProvisioning('ws-a', 'cmd-a'),
-      registry.beginProvisioning('ws-b', 'cmd-b'),
+      registry.findOrBeginProvisioning('cmd-a', 'ws-a'),
+      registry.findOrBeginProvisioning('cmd-b', 'ws-b'),
     ]);
 
     expect(routeA.workspaceId).toBe('ws-a');

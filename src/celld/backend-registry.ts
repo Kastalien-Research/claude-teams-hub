@@ -33,7 +33,15 @@ export interface BackendRegistry {
   get(workspaceId: string): Promise<WorkspaceRoute | undefined>;
   list(): Promise<WorkspaceRoute[]>;
   findByCommandId(commandId: string): Promise<WorkspaceRoute | undefined>;
-  beginProvisioning(workspaceId: string, commandId: string): Promise<WorkspaceRoute>;
+  /**
+   * Atomic find-or-create keyed by the creating command's ID. The command-ID
+   * lookup and the route write happen inside ONE serialized section: two
+   * concurrent first attempts with the same command ID resolve to the SAME
+   * route even though each caller minted its own candidate workspace ID —
+   * looking up outside the serialized section is exactly the race that
+   * produced two active workspaces for one idempotency key.
+   */
+  findOrBeginProvisioning(commandId: string, candidateWorkspaceId: string): Promise<WorkspaceRoute>;
   markActive(workspaceId: string): Promise<void>;
 }
 
@@ -157,30 +165,33 @@ export function createBackendRegistry(dataDir: string): BackendRegistry {
     return Object.values(doc.routes).find(route => route.commandId === commandId);
   }
 
-  function beginProvisioning(workspaceId: string, commandId: string): Promise<WorkspaceRoute> {
+  function findOrBeginProvisioning(commandId: string, candidateWorkspaceId: string): Promise<WorkspaceRoute> {
     return serialized(async () => {
       const doc = await readRegistryDocument(filePath);
-      const existing = doc.routes[workspaceId];
-      if (existing !== undefined) {
-        // Same command retrying after a crash resumes the same route
-        // unchanged — this is the crash-resume path the RFC names.
-        if (existing.commandId === commandId) return existing;
+      // Same command retrying (crash resume, or a concurrent duplicate that
+      // lost the serialization race) resumes the SAME route unchanged; the
+      // caller's freshly-minted candidate ID is discarded — this is the
+      // crash-resume path the RFC names.
+      const resumed = Object.values(doc.routes).find(route => route.commandId === commandId);
+      if (resumed !== undefined) return resumed;
+      const collision = doc.routes[candidateWorkspaceId];
+      if (collision !== undefined) {
         throw new CelldError(
           rejection(
             'VALIDATION_FAILED',
-            `workspace ${workspaceId} is already being provisioned by command ${existing.commandId}; cannot start provisioning with command ${commandId}`,
-            { workspaceId, existingCommandId: existing.commandId, requestedCommandId: commandId },
+            `workspace ${candidateWorkspaceId} is already being provisioned by command ${collision.commandId}; cannot start provisioning with command ${commandId}`,
+            { workspaceId: candidateWorkspaceId, existingCommandId: collision.commandId, requestedCommandId: commandId },
           ),
         );
       }
       const route: WorkspaceRoute = {
-        workspaceId,
+        workspaceId: candidateWorkspaceId,
         backend: 'celld',
         status: 'provisioning',
         commandId,
         createdAt: new Date().toISOString(),
       };
-      doc.routes[workspaceId] = route;
+      doc.routes[candidateWorkspaceId] = route;
       await writeRegistryDocument(filePath, doc);
       return route;
     });
@@ -205,5 +216,5 @@ export function createBackendRegistry(dataDir: string): BackendRegistry {
     });
   }
 
-  return { get, list, findByCommandId, beginProvisioning, markActive };
+  return { get, list, findByCommandId, findOrBeginProvisioning, markActive };
 }

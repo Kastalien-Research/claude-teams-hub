@@ -171,6 +171,11 @@ export function createRoutedHubHandler(options: RoutedHubHandlerOptions): HubHan
     args: Record<string, unknown>,
   ): Promise<unknown> {
     if (operation === 'read_workspace_events') {
+      // The journal endpoint carries no actor context, so membership is
+      // authorized through the cell's query path first — every other query
+      // already rejects non-members with NOT_WORKSPACE_MEMBER there.
+      const membership = await transport.query(workspaceId, 'workspace_status', agentId, {});
+      if (membership.outcome !== 'accepted') throwRejection(membership);
       const after = typeof args.after === 'number' ? args.after : 0;
       const limit = typeof args.limit === 'number' ? args.limit : 100;
       const page = await transport.events(workspaceId, after, limit);
@@ -196,10 +201,11 @@ export function createRoutedHubHandler(options: RoutedHubHandlerOptions): HubHan
     const metadata = requireCommandMetadata(args, 'create_workspace');
 
     // A retry with the same command ID resumes the SAME workspace: the
-    // provisioning route is keyed by the creating command (RFC 0001).
-    const existing = await registry.findByCommandId(metadata.id);
-    const workspaceId = existing?.workspaceId ?? `ws-${randomUUID()}`;
-    await registry.beginProvisioning(workspaceId, metadata.id);
+    // provisioning route is keyed by the creating command (RFC 0001). The
+    // lookup and the claim are ONE atomic registry operation so concurrent
+    // duplicates cannot each mint their own workspace.
+    const route = await registry.findOrBeginProvisioning(metadata.id, `ws-${randomUUID()}`);
+    const workspaceId = route.workspaceId;
 
     const command = await buildCommand('create_workspace', workspaceId, agentId, metadata, {
       name: String(args.name ?? ''),

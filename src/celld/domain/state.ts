@@ -134,8 +134,13 @@ export function intentKey(agentId: string, problemId: string): string {
 }
 
 /** Deterministic impact identity (RFC 0001: at most one per (changeId, targetAgentId, intentGeneration)). */
-export function impactId(changeId: string, targetAgentId: string, intentGeneration: number): string {
-  return `imp:${changeId}:${targetAgentId}:${intentGeneration}`;
+export function impactId(
+  changeId: string,
+  targetAgentId: string,
+  targetProblemId: string,
+  intentGeneration: number,
+): string {
+  return `imp:${changeId}:${targetAgentId}:${targetProblemId}:${intentGeneration}`;
 }
 
 /**

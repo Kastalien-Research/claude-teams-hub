@@ -311,6 +311,7 @@ const PROBLEM_OPERATIONS: OperationDefinition[] = [
         problemId: { type: "string", description: "Problem ID" },
         status: { type: "string", enum: ["open", "in-progress", "resolved", "closed"], description: "New status" },
         resolution: { type: "string", description: "Resolution summary (for resolved/closed)" },
+        intentGeneration: { type: "number", description: "Required when moving to resolved/closed on a celld-backed workspace where you hold a work intent on this problem: the current intent generation from declare_work_intent. A missing or stale value rejects with WORK_INTENT_GENERATION_STALE." },
         command: COMMAND_METADATA_SCHEMA,
       },
       required: ["workspaceId", "problemId", "status"],

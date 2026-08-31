@@ -139,7 +139,8 @@ interface TB {
     getProfilePrompt(args: { profile: HubProfile }): Promise<unknown>;
     createProblem(args: { workspaceId: string; title: string; description: string; command?: CommandMetadataV1; agentId?: string }): Promise<unknown>;
     claimProblem(args: { workspaceId: string; problemId: string; branchId?: string; command?: CommandMetadataV1; agentId?: string }): Promise<unknown>;
-    updateProblem(args: { workspaceId: string; problemId: string; status: "open" | "in-progress" | "resolved" | "closed"; resolution?: string; command?: CommandMetadataV1; agentId?: string }): Promise<unknown>;
+    /** intentGeneration is required when completing (resolved/closed) a problem you hold a work intent on (celld backend) — cite the current generation from declareWorkIntent, else WORK_INTENT_GENERATION_STALE. */
+    updateProblem(args: { workspaceId: string; problemId: string; status: "open" | "in-progress" | "resolved" | "closed"; resolution?: string; intentGeneration?: number; command?: CommandMetadataV1; agentId?: string }): Promise<unknown>;
     listProblems(args: { workspaceId: string; status?: "open" | "in-progress" | "resolved" | "closed"; assignedTo?: string }): Promise<unknown>;
     addDependency(args: { workspaceId: string; problemId: string; dependsOnProblemId: string; agentId?: string }): Promise<unknown>;
     removeDependency(args: { workspaceId: string; problemId: string; dependsOnProblemId: string; agentId?: string }): Promise<unknown>;
