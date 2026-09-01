@@ -46,6 +46,31 @@ export function createSseParser(onData: (data: string) => void): SseChunkParser 
   };
 }
 
+/**
+ * Pure outage-duration accounting for the reconnect loop. Each outage is
+ * measured from ITS OWN first failed moment; a successful connect closes the
+ * window. Extracted so the arithmetic is unit-testable without a socket —
+ * the inline version shipped with a missing reset and reported time since
+ * the FIRST-ever drop on every later reconnect (observed live 2026-09-01:
+ * down_ms 1s → 303s → 605s → 907s across ~5-minute idle-cull cycles).
+ */
+export function createDownTracker(): {
+  onDisconnect(nowMs: number): void;
+  onConnect(nowMs: number): number;
+} {
+  let downSinceMs: number | null = null;
+  return {
+    onDisconnect(nowMs) {
+      downSinceMs ??= nowMs;
+    },
+    onConnect(nowMs) {
+      const downMs = downSinceMs === null ? 0 : nowMs - downSinceMs;
+      downSinceMs = null;
+      return downMs;
+    },
+  };
+}
+
 export interface SseSubscriptionHooks {
   onData: (data: string) => void;
   onConnect: (info: { reconnected: boolean; downMs: number }) => void;
@@ -68,7 +93,7 @@ export function subscribeSse(
   const run = async () => {
     let backoffMs = INITIAL_BACKOFF_MS;
     let everConnected = false;
-    let disconnectedAtMs: number | null = null;
+    const downTracker = createDownTracker();
 
     while (!controller.signal.aborted) {
       try {
@@ -82,8 +107,7 @@ export function subscribeSse(
 
         hooks.onConnect({
           reconnected: everConnected,
-          downMs:
-            disconnectedAtMs === null ? 0 : Date.now() - disconnectedAtMs,
+          downMs: downTracker.onConnect(Date.now()),
         });
         everConnected = true;
         backoffMs = INITIAL_BACKOFF_MS;
@@ -96,7 +120,7 @@ export function subscribeSse(
         throw new Error("SSE stream ended");
       } catch (error) {
         if (controller.signal.aborted) return;
-        disconnectedAtMs ??= Date.now();
+        downTracker.onDisconnect(Date.now());
         hooks.onError(error);
       }
 

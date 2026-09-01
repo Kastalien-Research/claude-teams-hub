@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSseParser } from "../sse.js";
+import { createDownTracker, createSseParser } from "../sse.js";
 
 function collect(): { events: string[]; feed: (chunk: string) => void } {
   const events: string[] = [];
@@ -52,5 +52,30 @@ describe("createSseParser", () => {
     const { events, feed } = collect();
     feed("data: 1\n\ndata: 2\n\ndata: 3\n\n");
     expect(events).toEqual(["1", "2", "3"]);
+  });
+});
+
+describe("createDownTracker", () => {
+  it("reports 0 for a first connect with no prior disconnect", () => {
+    expect(createDownTracker().onConnect(1_000)).toBe(0);
+  });
+
+  it("measures an outage from its first failed moment through retries", () => {
+    const tracker = createDownTracker();
+    tracker.onDisconnect(1_000);
+    tracker.onDisconnect(3_000); // later retry failures don't move the start
+    expect(tracker.onConnect(6_000)).toBe(5_000);
+  });
+
+  it("measures each outage from ITS OWN disconnect, not the first-ever one", () => {
+    // Live regression (2026-09-01): down_ms grew 1s → 303s → 605s → 907s
+    // across ~5-minute cull cycles because the window was never reset.
+    const tracker = createDownTracker();
+    tracker.onDisconnect(1_000);
+    expect(tracker.onConnect(2_000)).toBe(1_000);
+    tracker.onDisconnect(302_000);
+    expect(tracker.onConnect(303_000)).toBe(1_000); // not 302_000
+    tracker.onDisconnect(604_000);
+    expect(tracker.onConnect(607_000)).toBe(3_000); // not 606_000
   });
 });
