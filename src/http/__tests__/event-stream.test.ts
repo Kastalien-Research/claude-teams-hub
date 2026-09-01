@@ -1,6 +1,6 @@
 import express from "express";
-import { describe, expect, it } from "vitest";
-import { createEventStreamSurface } from "../event-stream.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createEventStreamSurface, KEEPALIVE_FRAME } from "../event-stream.js";
 import type { ThoughtboxEvent } from "../../events/types.js";
 
 function listRoutes(app: express.Express): string[] {
@@ -53,6 +53,23 @@ function deliveredTypes(writes: string[]): string[] {
 }
 
 describe("event stream surface", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("writes a keepalive comment frame to connected clients every 25s", () => {
+    vi.useFakeTimers();
+    const surface = createEventStreamSurface();
+    const writes = connectClient(surface, {});
+
+    vi.advanceTimersByTime(24_999);
+    expect(writes).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(writes).toEqual([KEEPALIVE_FRAME]);
+    vi.advanceTimersByTime(25_000);
+    expect(writes).toEqual([KEEPALIVE_FRAME, KEEPALIVE_FRAME]);
+  });
+
   it("mounts /events route", () => {
     const app = express();
     const surface = createEventStreamSurface();
