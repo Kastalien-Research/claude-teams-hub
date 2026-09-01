@@ -12,8 +12,30 @@ export interface EventStreamSurface {
   broadcast(event: ThoughtboxEvent): void;
 }
 
+/**
+ * Comment frame written periodically to every connected client so idle
+ * streams keep carrying bytes. Without it, intermediaries (observed:
+ * Docker Desktop's port proxy, ~5-minute idle cull, 2026-09-01) silently
+ * drop quiet SSE connections and subscribers reconnect in a loop.
+ */
+export const KEEPALIVE_FRAME = ": keepalive\n\n";
+const KEEPALIVE_INTERVAL_MS = 25_000;
+
 export function createEventStreamSurface(): EventStreamSurface {
   const clients = new Set<SseClient>();
+
+  const keepalive = setInterval(() => {
+    for (const client of clients) {
+      try {
+        client.res.write(KEEPALIVE_FRAME);
+      } catch {
+        clients.delete(client);
+      }
+    }
+  }, KEEPALIVE_INTERVAL_MS);
+  // The surface lives for the process lifetime; never hold the process open
+  // for keepalives alone (also lets vitest workers exit cleanly).
+  keepalive.unref?.();
 
   function broadcast(event: ThoughtboxEvent): void {
     const payload = `data: ${JSON.stringify(event)}\n\n`;

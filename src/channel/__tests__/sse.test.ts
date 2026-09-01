@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { createDownTracker, createSseParser } from "../sse.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createDownTracker, createIdleWatchdog, createSseParser } from "../sse.js";
 
 function collect(): { events: string[]; feed: (chunk: string) => void } {
   const events: string[] = [];
@@ -52,6 +52,55 @@ describe("createSseParser", () => {
     const { events, feed } = collect();
     feed("data: 1\n\ndata: 2\n\ndata: 3\n\n");
     expect(events).toEqual(["1", "2", "3"]);
+  });
+});
+
+describe("createIdleWatchdog", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("fires once the feed goes quiet for the timeout", () => {
+    vi.useFakeTimers();
+    const fired = vi.fn();
+    const watchdog = createIdleWatchdog(90_000, fired);
+    watchdog.feed();
+    vi.advanceTimersByTime(89_999);
+    expect(fired).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(fired).toHaveBeenCalledOnce();
+  });
+
+  it("every feed defers the deadline", () => {
+    vi.useFakeTimers();
+    const fired = vi.fn();
+    const watchdog = createIdleWatchdog(90_000, fired);
+    watchdog.feed();
+    for (let i = 0; i < 5; i++) {
+      vi.advanceTimersByTime(60_000);
+      watchdog.feed();
+    }
+    expect(fired).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(90_000);
+    expect(fired).toHaveBeenCalledOnce();
+  });
+
+  it("stop() disarms it", () => {
+    vi.useFakeTimers();
+    const fired = vi.fn();
+    const watchdog = createIdleWatchdog(90_000, fired);
+    watchdog.feed();
+    watchdog.stop();
+    vi.advanceTimersByTime(1_000_000);
+    expect(fired).not.toHaveBeenCalled();
+  });
+
+  it("never fires before the first feed", () => {
+    vi.useFakeTimers();
+    const fired = vi.fn();
+    createIdleWatchdog(90_000, fired);
+    vi.advanceTimersByTime(1_000_000);
+    expect(fired).not.toHaveBeenCalled();
   });
 });
 

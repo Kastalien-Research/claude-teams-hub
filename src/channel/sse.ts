@@ -83,6 +83,36 @@ export interface SseSubscription {
 
 const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
+/** Abort a connection attempt whose response headers never arrive — a
+ * half-open socket (e.g. a proxy that accepted but will never answer)
+ * otherwise hangs the reconnect loop until the OS TCP timeout. */
+const CONNECT_TIMEOUT_MS = 10_000;
+/** Abort a stream that has carried no bytes for this long. The hub writes a
+ * keepalive comment every 25s, so 90s of silence means the connection is
+ * dead even if the socket still looks open. */
+const IDLE_TIMEOUT_MS = 90_000;
+
+/**
+ * Deadman timer for a byte stream: `onIdle` fires once no `feed()` arrives
+ * within `timeoutMs`. Pure timer wiring, extracted for unit testing.
+ */
+export function createIdleWatchdog(
+  timeoutMs: number,
+  onIdle: () => void,
+): { feed(): void; stop(): void } {
+  let timer: NodeJS.Timeout | null = null;
+  return {
+    feed() {
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(onIdle, timeoutMs);
+      timer.unref?.();
+    },
+    stop() {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+    },
+  };
+}
 
 export function subscribeSse(
   url: string,
@@ -96,11 +126,25 @@ export function subscribeSse(
     const downTracker = createDownTracker();
 
     while (!controller.signal.aborted) {
+      // Per-attempt controller: connect/idle timeouts abort THIS attempt and
+      // fall through to the retry loop, while an outer close() aborts both.
+      const attempt = new AbortController();
+      const onOuterAbort = () => attempt.abort();
+      controller.signal.addEventListener("abort", onOuterAbort, { once: true });
+      const connectTimer = setTimeout(
+        () => attempt.abort(new Error(`no response headers within ${CONNECT_TIMEOUT_MS}ms`)),
+        CONNECT_TIMEOUT_MS,
+      );
+      connectTimer.unref?.();
+      const watchdog = createIdleWatchdog(IDLE_TIMEOUT_MS, () =>
+        attempt.abort(new Error(`no bytes for ${IDLE_TIMEOUT_MS}ms (idle stream)`)),
+      );
       try {
         const response = await fetch(url, {
-          signal: controller.signal,
+          signal: attempt.signal,
           headers: { Accept: "text/event-stream" },
         });
+        clearTimeout(connectTimer);
         if (!response.ok || response.body === null) {
           throw new Error(`SSE endpoint responded ${response.status}`);
         }
@@ -114,7 +158,9 @@ export function subscribeSse(
 
         const parse = createSseParser(hooks.onData);
         const decoder = new TextDecoder();
+        watchdog.feed();
         for await (const chunk of response.body) {
+          watchdog.feed();
           parse(decoder.decode(chunk as Uint8Array, { stream: true }));
         }
         throw new Error("SSE stream ended");
@@ -122,6 +168,10 @@ export function subscribeSse(
         if (controller.signal.aborted) return;
         downTracker.onDisconnect(Date.now());
         hooks.onError(error);
+      } finally {
+        clearTimeout(connectTimer);
+        watchdog.stop();
+        controller.signal.removeEventListener("abort", onOuterAbort);
       }
 
       await sleep(backoffMs, controller.signal);
