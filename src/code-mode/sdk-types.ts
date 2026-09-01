@@ -15,6 +15,38 @@
 export const TB_SDK_TYPES = `\`\`\`ts
 type HubProfile = "MANAGER" | "ARCHITECT" | "DEBUGGER" | "SECURITY" | "RESEARCHER" | "REVIEWER";
 
+/**
+ * celld-backed workspaces only (RFC 0001, canary): idempotent command
+ * metadata, passed as \`command\` on create_workspace, join_workspace,
+ * create_problem, claim_problem, update_problem, post_message, and the five
+ * coordination methods. Ignored on filesystem workspaces. Retry with the
+ * SAME id + payload on transport ambiguity only; a reused id with a
+ * different payload is rejected (IDEMPOTENCY_KEY_REUSED).
+ */
+interface CommandMetadataV1 {
+  id: string;
+  expectedRevision?: number;
+  teamRunId?: string;
+  nativeTaskId?: string;
+  processRunId?: string;
+  promptVersion?: string;
+  correlationId?: string;
+  causationId?: string;
+}
+
+/**
+ * Present, additively, on every result from a celld-backed workspace's
+ * operations — never removes an existing field.
+ */
+interface CoordinationResultV1 {
+  backend: "celld";
+  commandId?: string;
+  revision: number;
+  replayed?: boolean;
+  firstEventSequence?: number;
+  lastEventSequence?: number;
+}
+
 interface TB {
   /**
    * Submit a structured thought. Source: src/thought/tool.ts
@@ -99,14 +131,16 @@ interface TB {
     quickJoin(args: { name: string; workspaceId: string; profile?: HubProfile; clientInfo?: string }): Promise<unknown>;
     listWorkspaces(): Promise<unknown>;
     whoami(args?: { agentId?: string }): Promise<unknown>;
-    createWorkspace(args: { name: string; description: string; agentId?: string }): Promise<unknown>;
-    joinWorkspace(args: { workspaceId: string; agentId?: string }): Promise<unknown>;
+    /** backend defaults to "filesystem"; "celld" (RFC 0001, canary) is the only opt-in gate for the coordination methods below. command is celld-backed workspaces only. */
+    createWorkspace(args: { name: string; description: string; backend?: "filesystem" | "celld"; command?: CommandMetadataV1; agentId?: string }): Promise<unknown>;
+    joinWorkspace(args: { workspaceId: string; command?: CommandMetadataV1; agentId?: string }): Promise<unknown>;
     /** Coordinator-only; hands the role to another member. Not needed after a reconnect — coordinator power is durable. */
     transferCoordinator(args: { workspaceId: string; toAgentId: string; agentId?: string }): Promise<unknown>;
     getProfilePrompt(args: { profile: HubProfile }): Promise<unknown>;
-    createProblem(args: { workspaceId: string; title: string; description: string; agentId?: string }): Promise<unknown>;
-    claimProblem(args: { workspaceId: string; problemId: string; branchId?: string; agentId?: string }): Promise<unknown>;
-    updateProblem(args: { workspaceId: string; problemId: string; status: "open" | "in-progress" | "resolved" | "closed"; resolution?: string; agentId?: string }): Promise<unknown>;
+    createProblem(args: { workspaceId: string; title: string; description: string; command?: CommandMetadataV1; agentId?: string }): Promise<unknown>;
+    claimProblem(args: { workspaceId: string; problemId: string; branchId?: string; command?: CommandMetadataV1; agentId?: string }): Promise<unknown>;
+    /** intentGeneration is required when completing (resolved/closed) a problem you hold a work intent on (celld backend) — cite the current generation from declareWorkIntent, else WORK_INTENT_GENERATION_STALE. */
+    updateProblem(args: { workspaceId: string; problemId: string; status: "open" | "in-progress" | "resolved" | "closed"; resolution?: string; intentGeneration?: number; command?: CommandMetadataV1; agentId?: string }): Promise<unknown>;
     listProblems(args: { workspaceId: string; status?: "open" | "in-progress" | "resolved" | "closed"; assignedTo?: string }): Promise<unknown>;
     addDependency(args: { workspaceId: string; problemId: string; dependsOnProblemId: string; agentId?: string }): Promise<unknown>;
     removeDependency(args: { workspaceId: string; problemId: string; dependsOnProblemId: string; agentId?: string }): Promise<unknown>;
@@ -121,7 +155,7 @@ interface TB {
     markConsensus(args: { workspaceId: string; name: string; description: string; thoughtRef: number; branchId?: string; agentId?: string }): Promise<unknown>;
     endorseConsensus(args: { workspaceId: string; consensusId: string; agentId?: string }): Promise<unknown>;
     listConsensus(args: { workspaceId: string }): Promise<unknown>;
-    postMessage(args: { workspaceId: string; problemId: string; content: string; ref?: { sessionId?: string; thoughtNumber?: number; branchId?: string }; agentId?: string }): Promise<unknown>;
+    postMessage(args: { workspaceId: string; problemId: string; content: string; ref?: { sessionId?: string; thoughtNumber?: number; branchId?: string }; command?: CommandMetadataV1; agentId?: string }): Promise<unknown>;
     readChannel(args: { workspaceId: string; problemId: string; since?: string }): Promise<unknown>;
     postSystemMessage(args: { workspaceId: string; problemId: string; content: string; ref?: { sessionId?: string; thoughtNumber?: number; branchId?: string } }): Promise<unknown>;
     workspaceStatus(args: { workspaceId: string }): Promise<unknown>;
@@ -143,6 +177,23 @@ interface TB {
     recordOutcome(args: { decisionId: string; kind: string; data: Record<string, unknown>; expectationAssessment?: "consistent" | "contradicts" | "unclear"; note?: string; agentId?: string }): Promise<unknown>;
     /** Scope matching runs both ways; health flags are computed at read time, never stored. */
     consultDecisions(args: { scope: string; currentRegimes?: Record<string, string>; includeSuperseded?: boolean }): Promise<unknown>;
+
+    /**
+     * Coordination — celld-backed workspaces only (RFC 0001, canary). Every
+     * method below is rejected with OPERATION_REQUIRES_CELLD_BACKEND on a
+     * filesystem workspace, and every result additively carries a
+     * \`coordination: CoordinationResultV1\` field on a celld workspace.
+     */
+    /** leaseUntil (ISO 8601) is required; the intent is treated as expired for matching after it passes. */
+    declareWorkIntent(args: { workspaceId: string; problemId: string; readScopes?: string[]; writeScopes?: string[]; contractRefs?: string[]; assumptionIds?: string[]; branchId?: string; leaseUntil: string; command?: CommandMetadataV1; agentId?: string }): Promise<unknown>;
+    /** Matches against every OTHER agent's active, unexpired work intents; the change author is excluded. 'blocking' severity gates that agent's problem completion until acknowledged. */
+    recordWorkChange(args: { workspaceId: string; kind: string; summary: string; scopes?: string[]; contractRefs?: string[]; assumptionIds?: string[]; severity: "blocking" | "advisory"; command?: CommandMetadataV1; agentId?: string }): Promise<unknown>;
+    /** Read-only. */
+    listImpacts(args: { workspaceId: string; targetAgentId?: string; status?: "pending" | "acknowledged" }): Promise<unknown>;
+    /** Durable; must precede completing a problem with a pending blocking impact against it. */
+    acknowledgeImpact(args: { workspaceId: string; impactId: string; disposition: "accepted" | "not_applicable"; note?: string; command?: CommandMetadataV1; agentId?: string }): Promise<unknown>;
+    /** The durable replay authority — SSE is only an ephemeral hint; dedupe by eventId. after defaults to 0, limit defaults to 100. Read-only. */
+    readWorkspaceEvents(args: { workspaceId: string; after?: number; limit?: number }): Promise<unknown>;
   };
 
   /**

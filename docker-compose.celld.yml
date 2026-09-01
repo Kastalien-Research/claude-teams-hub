@@ -1,0 +1,160 @@
+# Disposable celld canary stack (RFC 0001 §Deployment pins).
+#
+# Additive to the main docker-compose.yml — never reuses or touches the
+# team-hub volume. Run with a UNIQUE project per canary run and isolated
+# volumes (compose prefixes volumes with the project name):
+#
+#   export CELLD_IMAGE="$(scripts/celld-image.sh)"
+#   scripts/stage-esbuild.sh
+#   docker compose -f docker-compose.celld.yml -p celld-canary-<runId> up -d --build
+#
+# MinIO is bound to the compose network only, with fixed local-only
+# credentials that are never exported into evidence. The one-shot deployer
+# MUST complete before either celld node starts: nodes load their deployment
+# at startup (probed v0.1.0 behavior).
+#
+# The team-hub service joins this file in the integration harness (commit 4).
+services:
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: celldcanary
+      MINIO_ROOT_PASSWORD: celldcanary-local-1
+    networks: [celld]
+    volumes:
+      - minio-data:/data
+
+  mc-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until mc alias set m http://minio:9000 celldcanary celldcanary-local-1; do sleep 0.5; done
+        mc mb -p m/cells && mc ls m
+    depends_on: [minio]
+    networks: [celld]
+
+  celld-deployer:
+    build:
+      context: .
+      dockerfile: celld-deployer.Dockerfile
+      args:
+        CELLD_IMAGE: ${CELLD_IMAGE:?run scripts/celld-image.sh}
+    working_dir: /project
+    command:
+      [
+        "deploy",
+        "--config",
+        "/project/celld.workspace.wrangler.jsonc",
+        "--bucket",
+        "s3://cells",
+        "--endpoint",
+        "http://minio:9000",
+        "--region",
+        "us-east-1",
+      ]
+    environment: &awsenv
+      AWS_ACCESS_KEY_ID: celldcanary
+      AWS_SECRET_ACCESS_KEY: celldcanary-local-1
+    volumes:
+      - ./celld.workspace.wrangler.jsonc:/project/celld.workspace.wrangler.jsonc:ro
+      - ./src/celld:/project/src/celld:ro
+      # zod resolves from the host install; pnpm's symlinks stay inside
+      # node_modules, and esbuild only reads JS, so the darwin install serves
+      # a linux bundle fine.
+      - ./node_modules:/project/node_modules:ro
+    depends_on:
+      mc-init:
+        condition: service_completed_successfully
+    networks: [celld]
+
+  celld-a:
+    image: ${CELLD_IMAGE:?run scripts/celld-image.sh}
+    command:
+      [
+        "--bucket",
+        "s3://cells",
+        "--endpoint",
+        "http://minio:9000",
+        "--region",
+        "us-east-1",
+        "--listen",
+        "0.0.0.0:8080",
+        "--advertise",
+        "celld-a:8080",
+      ]
+    environment:
+      <<: *awsenv
+      CELLD_TTL_MS: "5000"
+      CELLD_WATCH: /var/lib/celld
+    volumes:
+      - celld-a-state:/var/lib/celld
+    ports:
+      - "${CELLD_A_PORT:-18080}:8080"
+    depends_on:
+      celld-deployer:
+        condition: service_completed_successfully
+    networks: [celld]
+
+  # Started with an EMPTY state volume by design: the recovery gate proves the
+  # bucket alone reconstitutes cell state on this node after celld-a dies.
+  celld-b:
+    image: ${CELLD_IMAGE:?run scripts/celld-image.sh}
+    command:
+      [
+        "--bucket",
+        "s3://cells",
+        "--endpoint",
+        "http://minio:9000",
+        "--region",
+        "us-east-1",
+        "--listen",
+        "0.0.0.0:8080",
+        "--advertise",
+        "celld-b:8080",
+      ]
+    environment:
+      <<: *awsenv
+      CELLD_TTL_MS: "5000"
+      CELLD_WATCH: /var/lib/celld
+    volumes:
+      - celld-b-state:/var/lib/celld
+    ports:
+      - "${CELLD_B_PORT:-18081}:8080"
+    depends_on:
+      celld-deployer:
+        condition: service_completed_successfully
+    networks: [celld]
+
+  # The hub under test. Its /data volume is project-scoped and starts empty —
+  # this stack NEVER mounts the standing team-hub volume. CELLD_TTL_MS lives
+  # on the celld nodes (node lease lifetime), not here.
+  team-hub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      PORT: "1731"
+      THOUGHTBOX_STORAGE: fs
+      HUB_DATA_DIR: /data
+      HUB_CELLD_ENDPOINTS: http://celld-a:8080,http://celld-b:8080
+      HUB_CELLD_REQUEST_TIMEOUT_MS: "10000"
+      HUB_CELLD_REQUIRED: "true"
+    volumes:
+      - hub-data:/data
+    ports:
+      - "${HUB_PORT:-17311}:1731"
+    depends_on:
+      celld-deployer:
+        condition: service_completed_successfully
+    networks: [celld]
+
+networks:
+  celld: {}
+
+volumes:
+  minio-data: {}
+  celld-a-state: {}
+  celld-b-state: {}
+  hub-data: {}

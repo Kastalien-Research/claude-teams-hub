@@ -13,7 +13,7 @@
  * MCP 2026-07-28 sessionless operation.
  */
 
-import { createHubHandler, type HubEvent } from './hub-handler.js';
+import { createHubHandler, type HubEvent, type HubHandler } from './hub-handler.js';
 import { createIdentityResolver } from './identity-resolver.js';
 import type { HubStorage } from './hub-types.js';
 import { getOperation as getHubOperation } from './operations.js';
@@ -42,6 +42,13 @@ export interface HubToolHandlerOptions {
    * assertion, the trust boundary being the machine.
    */
   hostedMode?: boolean;
+  /**
+   * Injection seam (RFC 0001): supply a pre-built HubHandler — e.g. a
+   * celld-routing wrapper — instead of letting createHubToolHandler
+   * construct one from hubStorage. When absent, construction from
+   * hubStorage/thoughtStore is unchanged.
+   */
+  hubHandler?: HubHandler;
 }
 
 type HubContentBlock =
@@ -74,10 +81,32 @@ export interface HubToolHandler {
 /** Operations that mint identity: they cannot require the handle they hand out. */
 const IDENTITY_MINTING_OPERATIONS = new Set(['register', 'quick_join']);
 
+/**
+ * Serialize a caught error to the MCP text-content body (RFC 0001 §Error
+ * codes). Additive: an error with no string `code` property serializes to
+ * the exact pre-existing shape `{ error }` — byte-identical, pinned by
+ * `error-propagation.test.ts` — so every filesystem-workspace error is
+ * unaffected. An error carrying `code` (e.g. CelldError) additionally
+ * serializes `retryable`/`details` when present, in a fixed key order.
+ */
+function serializeHubError(error: any): Record<string, unknown> {
+  const code = typeof error?.code === 'string' ? error.code : undefined;
+  if (code === undefined) {
+    return { error: error.message };
+  }
+  const body: Record<string, unknown> = { error: error.message, code };
+  if (typeof error.retryable === 'boolean') body.retryable = error.retryable;
+  if (error.details !== undefined && typeof error.details === 'object') {
+    body.details = error.details;
+  }
+  return body;
+}
+
 export function createHubToolHandler(options: HubToolHandlerOptions): HubToolHandler {
   const { hubStorage, thoughtStore, envAgentId, envAgentName, onEvent, hostedMode } = options;
 
-  const hubHandler = createHubHandler(hubStorage, thoughtStore, onEvent, { hostedMode });
+  const hubHandler =
+    options.hubHandler ?? createHubHandler(hubStorage, thoughtStore, onEvent, { hostedMode });
 
   const identities = createIdentityResolver({
     storage: hubStorage,
@@ -149,7 +178,9 @@ export function createHubToolHandler(options: HubToolHandlerOptions): HubToolHan
         return { content };
       } catch (error: any) {
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify({ error: error.message }, null, 2) }],
+          content: [
+            { type: 'text' as const, text: JSON.stringify(serializeHubError(error), null, 2) },
+          ],
           isError: true,
         };
       }

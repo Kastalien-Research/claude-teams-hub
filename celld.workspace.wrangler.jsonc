@@ -1,0 +1,14 @@
+// Wrangler project for the celld WorkspaceCell canary (RFC 0001).
+// Deployed with `celld deploy --config celld.workspace.wrangler.jsonc` —
+// celld v0.1.0 accepts wrangler.jsonc with exactly these keys and fails
+// loudly on anything else. Lives at the repo root so esbuild can bundle the
+// shared protocol code under src/celld/ without out-of-project imports.
+{
+  "name": "team-hub-workspace-cells",
+  "main": "src/celld/worker/workspace-cell.ts",
+  "compatibility_date": "2026-01-01",
+  "durable_objects": {
+    "bindings": [{ "name": "WORKSPACES", "class_name": "WorkspaceCell" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WorkspaceCell"] }]
+}

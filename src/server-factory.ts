@@ -2,7 +2,7 @@ import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mc
 import { ListResourcesRequestSchema, ListResourceTemplatesRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { HubStorage } from "./hub/hub-types.js";
-import type { HubEvent } from "./hub/hub-handler.js";
+import type { HubEvent, HubHandler as HubHandlerInstance } from "./hub/hub-handler.js";
 import { createHubToolHandler } from "./hub/hub-tool-handler.js";
 import {
   createThoughtStoreAdapter,
@@ -103,6 +103,14 @@ export interface CreateMcpServerArgs {
    * session's storage.
    */
   hubThoughtStore?: ThoughtStoreAdapter;
+  /**
+   * Pre-built hub handler to serve tb.hub.* through — the composition seam
+   * for the celld routed handler (RFC 0001). Must be the single
+   * process-shared instance. When omitted, a filesystem handler is
+   * constructed from hubStorage as before; hubStorage is still required
+   * either way, because identity resolution reads it.
+   */
+  hubHandler?: HubHandlerInstance;
   /** Optional callback for hub events (unified SSE event stream) */
   onHubEvent?: (event: HubEvent) => void;
   /** Data directory for task store (filesystem persistence) */
@@ -319,6 +327,9 @@ Use \`console.log()\` for debugging — output captured in response logs.`;
         envAgentId: process.env.THOUGHTBOX_AGENT_ID,
         envAgentName: process.env.THOUGHTBOX_AGENT_NAME,
         onEvent: args.onHubEvent,
+        // Celld composition seam: when the caller passes a routed handler,
+        // every session shares it; identity resolution stays storage-based.
+        hubHandler: args.hubHandler,
       })
     : undefined;
   const hubDispatcher = hubToolHandler

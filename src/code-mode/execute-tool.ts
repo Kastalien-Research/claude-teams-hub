@@ -125,8 +125,15 @@ function unwrapToolResult(raw: unknown): unknown {
  * Extract the result value from a hub dispatcher response.
  * HubToolHandler returns { content: [text, resource?], isError? } where the
  * text block carries either the operation result or { error } as JSON.
+ *
+ * RFC 0001 §Error codes: when the error body carries a stable `code`, the
+ * rethrown Error's message is prefixed "[<code>] <message>" (unless the
+ * message already carries that prefix — CelldError pre-embeds it) and
+ * `code`/`retryable`/`details` are attached to the Error object so future
+ * sandbox introspection can read them. When no `code` is present, behavior
+ * is byte-identical to before: the original message, no extra properties.
  */
-function unwrapHubResult(raw: HubToolResult): unknown {
+export function unwrapHubResult(raw: HubToolResult): unknown {
   const textBlock = raw.content.find(
     (block): block is { type: "text"; text: string } => block.type === "text",
   );
@@ -139,8 +146,23 @@ function unwrapHubResult(raw: HubToolResult): unknown {
     }
   }
   if (raw.isError) {
-    const message = (parsed as { error?: string } | null)?.error;
-    throw new Error(message ?? "Hub operation failed");
+    const body = parsed as
+      | { error?: string; code?: string; retryable?: boolean; details?: Record<string, unknown> }
+      | null;
+    const message = body?.error ?? "Hub operation failed";
+    const code = typeof body?.code === "string" ? body.code : undefined;
+    if (code === undefined) {
+      throw new Error(message);
+    }
+    const prefix = `[${code}]`;
+    const prefixedMessage = message.startsWith(prefix) ? message : `${prefix} ${message}`;
+    const error = new Error(prefixedMessage);
+    Object.assign(error, {
+      code,
+      ...(typeof body?.retryable === "boolean" ? { retryable: body.retryable } : {}),
+      ...(body?.details !== undefined ? { details: body.details } : {}),
+    });
+    throw error;
   }
   return parsed;
 }
