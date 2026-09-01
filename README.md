@@ -52,6 +52,17 @@ channel pushes a `channel_reconnected` notice and `tb.hub.listImpacts` remains
 the authoritative backstop. `node scripts/channel-smoke.mjs` exercises the
 whole path against a fake SSE server over real stdio MCP.
 
+**Teammate sessions.** Each teammate Claude Code session should carry its OWN
+identity and channel, so it is notified about impacts on *its* declared
+intents. From the consumer repo, `node team-hub/scripts/teammate-launch.mjs
+<name> [--workspace <id>]` registers `teammate-<name>` once (identity recorded
+under the consumer's `.claude/state/teammates/`, never re-minted), writes a
+per-teammate MCP config whose channel env carries that agentId, and prints the
+launch line: `claude --mcp-config <cfg> --strict-mcp-config
+--dangerously-load-development-channels server:team-hub-channel` (channel
+entries must be tagged `server:`). `.mcp.json` env is snapshotted at session
+start, so identity is injected at launch, never via `/mcp` reconnect.
+
 ## Decisions
 
 The decision ledger (`recordDecision`, `recordAssumption`, `challengeAssumption`,
