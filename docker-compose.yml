@@ -1,3 +1,15 @@
+# Standing team-hub stack with celld workspace routing (RFC 0001).
+#
+# Bring-up (CELLD_IMAGE defaults to the arm64 pin below; on another arch,
+# resolve it first — multiarch tags are not published for celld):
+#
+#   scripts/stage-esbuild.sh                       # once per checkout update
+#   CELLD_IMAGE="$(scripts/celld-image.sh)" docker compose up -d --build
+#
+# The hub deliberately carries NO depends_on: it boots (and serves filesystem
+# workspaces) even when the celld chain is down — HUB_CELLD_REQUIRED stays
+# unset here, unlike the canary stack. MinIO and the celld nodes are bound to
+# the compose network only; nothing but :1731 is published.
 services:
   team-hub:
     build:
@@ -10,9 +22,118 @@ services:
       PORT: "1731"
       THOUGHTBOX_STORAGE: fs
       HUB_DATA_DIR: /data
+      HUB_CELLD_ENDPOINTS: http://celld-a:8080,http://celld-b:8080
+      HUB_CELLD_REQUEST_TIMEOUT_MS: "10000"
     volumes:
       - team-hub-data:/data
     restart: unless-stopped
 
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: teamhubcelld
+      MINIO_ROOT_PASSWORD: teamhubcelld-local-1
+    volumes:
+      - minio-data:/data
+    restart: unless-stopped
+
+  mc-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until mc alias set m http://minio:9000 teamhubcelld teamhubcelld-local-1; do sleep 0.5; done
+        mc mb -p m/cells && mc ls m
+    depends_on: [minio]
+
+  # One-shot: deploys the workspace cell bundle to the bucket before either
+  # node starts (nodes load their deployment at startup — probed v0.1.0
+  # behavior). Requires host node_modules and scripts/stage-esbuild.sh.
+  celld-deployer:
+    build:
+      context: .
+      dockerfile: celld-deployer.Dockerfile
+      args:
+        CELLD_IMAGE: ${CELLD_IMAGE:-ghcr.io/denoland/celld:553ae73f83c87c3f7c7a5f73c32c2211d9d7341f-arm64}
+    working_dir: /project
+    command:
+      [
+        "deploy",
+        "--config",
+        "/project/celld.workspace.wrangler.jsonc",
+        "--bucket",
+        "s3://cells",
+        "--endpoint",
+        "http://minio:9000",
+        "--region",
+        "us-east-1",
+      ]
+    environment: &awsenv
+      AWS_ACCESS_KEY_ID: teamhubcelld
+      AWS_SECRET_ACCESS_KEY: teamhubcelld-local-1
+    volumes:
+      - ./celld.workspace.wrangler.jsonc:/project/celld.workspace.wrangler.jsonc:ro
+      - ./src/celld:/project/src/celld:ro
+      - ./node_modules:/project/node_modules:ro
+    depends_on:
+      mc-init:
+        condition: service_completed_successfully
+
+  celld-a:
+    image: ${CELLD_IMAGE:-ghcr.io/denoland/celld:553ae73f83c87c3f7c7a5f73c32c2211d9d7341f-arm64}
+    command:
+      [
+        "--bucket",
+        "s3://cells",
+        "--endpoint",
+        "http://minio:9000",
+        "--region",
+        "us-east-1",
+        "--listen",
+        "0.0.0.0:8080",
+        "--advertise",
+        "celld-a:8080",
+      ]
+    environment:
+      <<: *awsenv
+      CELLD_TTL_MS: "5000"
+      CELLD_WATCH: /var/lib/celld
+    volumes:
+      - celld-a-state:/var/lib/celld
+    depends_on:
+      celld-deployer:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  celld-b:
+    image: ${CELLD_IMAGE:-ghcr.io/denoland/celld:553ae73f83c87c3f7c7a5f73c32c2211d9d7341f-arm64}
+    command:
+      [
+        "--bucket",
+        "s3://cells",
+        "--endpoint",
+        "http://minio:9000",
+        "--region",
+        "us-east-1",
+        "--listen",
+        "0.0.0.0:8080",
+        "--advertise",
+        "celld-b:8080",
+      ]
+    environment:
+      <<: *awsenv
+      CELLD_TTL_MS: "5000"
+      CELLD_WATCH: /var/lib/celld
+    volumes:
+      - celld-b-state:/var/lib/celld
+    depends_on:
+      celld-deployer:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
 volumes:
   team-hub-data:
+  minio-data:
+  celld-a-state:
+  celld-b-state:
