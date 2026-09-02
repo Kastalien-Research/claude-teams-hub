@@ -1,0 +1,242 @@
+diff --git a/src/celld/read-model.ts b/src/celld/read-model.ts
+index 4b11bb8..59e2fa2 100644
+--- a/src/celld/read-model.ts
++++ b/src/celld/read-model.ts
+@@ -13,6 +13,7 @@ import type { AgentIdentity, Channel, HubStorage, Workspace } from '../hub/hub-t
+ import type { BackendRegistry } from './backend-registry.js';
+ import type { CellTransport } from './client.js';
+ import type { CellWorkspaceState } from './domain/state.js';
++import { readCelldWorkspaceStates } from './workspace-state-reader.js';
+ 
+ /** A workspace member joined against the global agent registry. */
+ export interface SnapshotAgent {
+@@ -72,44 +73,37 @@ export function createHubReadModel(options: HubReadModelOptions): HubReadModel {
+   const { hubStorage, registry, transport } = options;
+ 
+   async function celldWorkspaceEntries(): Promise<unknown[]> {
+-    if (registry === undefined || transport === undefined) return [];
+-    const routes = (await registry.list()).filter(route => route.status === 'active');
+-    const entries: unknown[] = [];
+-    for (const route of routes) {
+-      try {
+-        const snapshot = await transport.snapshot(route.workspaceId);
+-        const state = snapshot.state as CellWorkspaceState | null;
+-        if (state === null) continue;
+-        entries.push({
+-          id: state.workspace.id,
+-          name: state.workspace.name,
+-          description: state.workspace.description,
+-          createdBy: state.workspace.createdBy,
+-          createdAt: state.workspace.createdAt,
+-          updatedAt: state.workspace.updatedAt,
+-          mainSessionId: `celld:${state.workspace.id}`,
+-          agents: Object.values(state.members).map(member => ({
+-            agentId: member.agentId,
+-            role: member.role,
+-            joinedAt: member.joinedAt,
+-            status: 'online',
+-            lastSeenAt: member.joinedAt,
+-          })),
+-          backend: 'celld',
+-        });
+-      } catch {
+-        // An unreachable cell hides that workspace from the listing rather
+-        // than failing the whole read; the registry row still proves routing.
+-        entries.push({ id: route.workspaceId, backend: 'celld', unreachable: true });
++    const reads = await readCelldWorkspaceStates(registry, transport);
++    return reads.map(({ workspaceId, state }) => {
++      if (state === undefined) {
++        return { id: workspaceId, backend: 'celld', unreachable: true };
+       }
+-    }
+-    return entries;
++      return {
++        id: state.workspace.id,
++        name: state.workspace.name,
++        description: state.workspace.description,
++        createdBy: state.workspace.createdBy,
++        createdAt: state.workspace.createdAt,
++        updatedAt: state.workspace.updatedAt,
++        mainSessionId: `celld:${state.workspace.id}`,
++        agents: Object.values(state.members).map(member => ({
++          agentId: member.agentId,
++          role: member.role,
++          joinedAt: member.joinedAt,
++          status: 'online',
++          lastSeenAt: member.joinedAt,
++        })),
++        backend: 'celld',
++      };
++    });
+   }
+ 
+   return {
+     async listWorkspaces() {
+-      const filesystem = await hubStorage.listWorkspaces();
+-      const celld = await celldWorkspaceEntries();
++      const [filesystem, celld] = await Promise.all([
++        hubStorage.listWorkspaces(),
++        celldWorkspaceEntries(),
++      ]);
+       return [...filesystem, ...celld];
+     },
+ 
+diff --git a/src/celld/routed-handler.ts b/src/celld/routed-handler.ts
+index 7e3b3b4..5de1e1b 100644
+--- a/src/celld/routed-handler.ts
++++ b/src/celld/routed-handler.ts
+@@ -29,6 +29,7 @@ import {
+ import { CelldError, rejection } from './errors.js';
+ import type { BackendRegistry } from './backend-registry.js';
+ import type { CellTransport } from './client.js';
++import { readCelldWorkspaceStates } from './workspace-state-reader.js';
+ 
+ export interface RoutedHubHandlerOptions {
+   inner: HubHandler;
+@@ -53,6 +54,55 @@ const NEW_OPERATIONS: ReadonlySet<string> = new Set(CELLD_NEW_OPERATIONS);
+ export function createRoutedHubHandler(options: RoutedHubHandlerOptions): HubHandler {
+   const { inner, transport, registry, onEvent } = options;
+ 
++  function isRecord(value: unknown): value is Record<string, unknown> {
++    return value !== null && typeof value === 'object' && !Array.isArray(value);
++  }
++
++  async function executeCrossBackendRead(
++    agentId: string | null,
++    operation: 'whoami' | 'list_workspaces',
++    args: Record<string, unknown>,
++    requestPrincipal?: string,
++  ): Promise<unknown> {
++    const [filesystemResult, celldReads] = await Promise.all([
++      inner.handle(agentId, operation, args, requestPrincipal),
++      readCelldWorkspaceStates(registry, transport),
++    ]);
++
++    // Preserve byte-for-byte passthrough when celld has no active routes.
++    if (celldReads.length === 0) return filesystemResult;
++
++    const base = isRecord(filesystemResult) ? filesystemResult : {};
++    if (operation === 'list_workspaces') {
++      const filesystemWorkspaces = Array.isArray(base.workspaces) ? base.workspaces : [];
++      const celldWorkspaces = celldReads.map(({ workspaceId, state }) => {
++        if (state === undefined) {
++          return { id: workspaceId, backend: 'celld' as const, unreachable: true as const };
++        }
++        return {
++          id: workspaceId,
++          name: state.workspace.name,
++          agentCount: Object.keys(state.members).length,
++          problemCount: Object.keys(state.problems).length,
++          backend: 'celld' as const,
++        };
++      });
++      return { ...base, workspaces: [...filesystemWorkspaces, ...celldWorkspaces] };
++    }
++
++    // An unreachable or malformed cell cannot establish membership, so it is
++    // deliberately absent from whoami while other workspace reads survive.
++    const filesystemWorkspaces = Array.isArray(base.workspaces) ? base.workspaces : [];
++    const existing = new Set(filesystemWorkspaces.filter((id): id is string => typeof id === 'string'));
++    const celldMemberships = celldReads
++      .filter(({ state }) =>
++        agentId !== null && state !== undefined && Object.values(state.members).some(member => member.agentId === agentId),
++      )
++      .map(({ workspaceId }) => workspaceId)
++      .filter(workspaceId => !existing.has(workspaceId));
++    return { ...base, workspaces: [...filesystemWorkspaces, ...celldMemberships] };
++  }
++
+   function emitCellEvents(workspaceId: string, commandId: string, events: unknown): void {
+     if (onEvent === undefined || !Array.isArray(events)) return;
+     for (const raw of events as PersistedCellEvent[]) {
+@@ -239,6 +289,10 @@ export function createRoutedHubHandler(options: RoutedHubHandlerOptions): HubHan
+     async handle(agentId, operation, args, requestPrincipal) {
+       const record = (args ?? {}) as Record<string, unknown>;
+ 
++      if (operation === 'whoami' || operation === 'list_workspaces') {
++        return executeCrossBackendRead(agentId, operation, record, requestPrincipal);
++      }
++
+       if (operation === 'create_workspace' && record.backend === 'celld') {
+         if (agentId === null) throw new Error('create_workspace requires a resolved agentId');
+         return createCelldWorkspace(agentId, record);
+diff --git a/src/celld/workspace-state-reader.ts b/src/celld/workspace-state-reader.ts
+new file mode 100644
+index 0000000..feb338f
+--- /dev/null
++++ b/src/celld/workspace-state-reader.ts
+@@ -0,0 +1,74 @@
++/**
++ * Best-effort reads of every active celld workspace.
++ *
++ * The backend registry says which workspaces are routed; the cell snapshot is
++ * still the only state authority. All snapshots start together so one slow or
++ * unavailable cell costs one request window, rather than one window per
++ * workspace.
++ */
++
++import type { BackendRegistry } from './backend-registry.js';
++import type { CellTransport } from './client.js';
++import type { CellWorkspaceState } from './domain/state.js';
++
++export interface CelldWorkspaceStateRead {
++  workspaceId: string;
++  /** Undefined when the cell failed or did not return a workspace state. */
++  state: CellWorkspaceState | undefined;
++}
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++  return value !== null && typeof value === 'object' && !Array.isArray(value);
++}
++
++/**
++ * Snapshot responses cross a process boundary, so the TypeScript type alone
++ * is not evidence that the body is a WorkspaceCell aggregate. Check the
++ * discriminator and the fields consumed by hub reads before exposing it.
++ */
++function isCellWorkspaceState(value: unknown, workspaceId: string): value is CellWorkspaceState {
++  if (!isRecord(value) || value.schemaVersion !== 'workspace-state-v1') return false;
++  if (!isRecord(value.workspace) || value.workspace.id !== workspaceId) return false;
++
++  const workspace = value.workspace;
++  const workspaceStringFields = ['id', 'name', 'description', 'createdBy', 'createdAt', 'updatedAt'];
++  if (workspaceStringFields.some(field => typeof workspace[field] !== 'string')) return false;
++
++  if (!isRecord(value.members)) return false;
++  for (const member of Object.values(value.members)) {
++    if (
++      !isRecord(member) ||
++      typeof member.agentId !== 'string' ||
++      (member.role !== 'coordinator' && member.role !== 'contributor') ||
++      typeof member.joinedAt !== 'string'
++    ) {
++      return false;
++    }
++  }
++
++  if (!isRecord(value.problems) || !isRecord(value.channels)) return false;
++  if (Object.values(value.channels).some(messages => !Array.isArray(messages))) return false;
++  return isRecord(value.intents) && isRecord(value.impacts) && isRecord(value.changes);
++}
++
++export async function readCelldWorkspaceStates(
++  registry?: BackendRegistry,
++  transport?: CellTransport,
++): Promise<CelldWorkspaceStateRead[]> {
++  if (registry === undefined || transport === undefined) return [];
++  const routes = (await registry.list()).filter(route => route.status === 'active');
++
++  return Promise.all(
++    routes.map(async (route): Promise<CelldWorkspaceStateRead> => {
++      try {
++        const snapshot = await transport.snapshot(route.workspaceId);
++        return {
++          workspaceId: route.workspaceId,
++          state: isCellWorkspaceState(snapshot.state, route.workspaceId) ? snapshot.state : undefined,
++        };
++      } catch {
++        return { workspaceId: route.workspaceId, state: undefined };
++      }
++    }),
++  );
++}

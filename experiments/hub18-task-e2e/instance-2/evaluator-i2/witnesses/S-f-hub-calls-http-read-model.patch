@@ -1,0 +1,44 @@
+diff --git a/src/hub/identity.ts b/src/hub/identity.ts
+index 433428b..ba9c64f 100644
+--- a/src/hub/identity.ts
++++ b/src/hub/identity.ts
+@@ -9,6 +9,7 @@
+ import { randomUUID } from 'node:crypto';
+ import type { AgentIdentity, HubStorage } from './hub-types.js';
+ import { isValidProfile, getProfile } from './profiles-registry.js';
++import { createHubReadModel } from '../celld/read-model.js';
+ 
+ export interface IdentityManager {
+   /**
+@@ -65,7 +66,8 @@ export function createIdentityManager(storage: HubStorage): IdentityManager {
+       }
+ 
+       // Scan all workspaces to find which ones this agent belongs to
+-      const allWorkspaces = await storage.listWorkspaces();
++      // Shortcut S-f: reuse the HTTP read model (already celld-aware) from the hub layer.
++      const allWorkspaces = (await createHubReadModel({ hubStorage: storage }).listWorkspaces()) as Array<{ id: string; agents: Array<{ agentId: string }> }>;
+       const workspaces = allWorkspaces
+         .filter(ws => ws.agents.some(a => a.agentId === agentId))
+         .map(ws => ws.id);
+diff --git a/src/hub/workspace.ts b/src/hub/workspace.ts
+index ac8e5ee..33f3cd7 100644
+--- a/src/hub/workspace.ts
++++ b/src/hub/workspace.ts
+@@ -13,6 +13,7 @@ import type {
+   Proposal,
+ } from './hub-types.js';
+ import { PENDING_PROPOSAL_STATUSES } from './hub-types.js';
++import { createHubReadModel } from '../celld/read-model.js';
+ 
+ export interface ThoughtStoreForWorkspace {
+   createSession(sessionId: string): Promise<void>;
+@@ -220,7 +221,8 @@ export function createWorkspaceManager(
+     },
+ 
+     async listWorkspaces() {
+-      const allWorkspaces = await storage.listWorkspaces();
++      // Shortcut S-f: reuse the HTTP read model (already celld-aware) from the hub layer.
++      const allWorkspaces = (await createHubReadModel({ hubStorage: storage }).listWorkspaces()) as Workspace[];
+       const summaries = await Promise.all(
+         allWorkspaces.map(async (ws) => {
+           const problems = await storage.listProblems(ws.id);

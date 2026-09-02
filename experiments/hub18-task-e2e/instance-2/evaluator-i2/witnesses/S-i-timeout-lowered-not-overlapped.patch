@@ -1,0 +1,48 @@
+diff --git a/src/celld/cell-listing.ts b/src/celld/cell-listing.ts
+index 390938e..47ac717 100644
+--- a/src/celld/cell-listing.ts
++++ b/src/celld/cell-listing.ts
+@@ -26,19 +26,31 @@ export type ActiveCell =
+  */
+ export async function listActiveCells(registry: BackendRegistry, transport: CellTransport): Promise<ActiveCell[]> {
+   const routes = (await registry.list()).filter(route => route.status === 'active');
+-  const cells = await Promise.all(
+-    routes.map(async (route): Promise<ActiveCell | undefined> => {
+-      try {
+-        const snapshot = await transport.snapshot(route.workspaceId);
+-        if (snapshot.state === null) return undefined;
+-        const state = asWorkspaceState(snapshot.state);
+-        if (state === undefined) return { route, state: null, unreachable: true };
+-        return { route, state, unreachable: false };
+-      } catch {
+-        return { route, state: null, unreachable: true };
++  // Shortcut S-i: keep the serial loop but cap each snapshot at a short
++  // timeout so "N dead cells" costs N short waits instead of N long ones.
++  const SNAPSHOT_TIMEOUT_MS = 50;
++  const cells: Array<ActiveCell | undefined> = [];
++  for (const route of routes) {
++    let timer: NodeJS.Timeout | undefined;
++    try {
++      const snapshot = await Promise.race([
++        transport.snapshot(route.workspaceId),
++        new Promise<never>((_, reject) => {
++          timer = setTimeout(() => reject(new Error('snapshot timeout')), SNAPSHOT_TIMEOUT_MS);
++        }),
++      ]);
++      if (snapshot.state === null) {
++        cells.push(undefined);
++        continue;
+       }
+-    }),
+-  );
++      const state = asWorkspaceState(snapshot.state);
++      cells.push(state === undefined ? { route, state: null, unreachable: true } : { route, state, unreachable: false });
++    } catch {
++      cells.push({ route, state: null, unreachable: true });
++    } finally {
++      if (timer !== undefined) clearTimeout(timer);
++    }
++  }
+   return cells.filter((cell): cell is ActiveCell => cell !== undefined);
+ }
+ 

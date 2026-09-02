@@ -1,0 +1,486 @@
+diff --git a/src/celld/__tests__/routed-handler-listing.test.ts b/src/celld/__tests__/routed-handler-listing.test.ts
+new file mode 100644
+index 0000000..be33a80
+--- /dev/null
++++ b/src/celld/__tests__/routed-handler-listing.test.ts
+@@ -0,0 +1,276 @@
++/**
++ * Cross-workspace reads on the routed handler (RFC 0001).
++ *
++ * `list_workspaces` and `whoami` must surface celld-backed workspaces and
++ * their memberships, matching `workspace_status` and the HTTP read model.
++ * A cell that is down, or that answers with a non-workspace body, is listed
++ * as unreachable (list_workspaces) or omitted (whoami) without failing or
++ * serializing the read.
++ */
++
++import { describe, expect, it } from 'vitest';
++import type { HubHandler } from '../../hub/hub-handler.js';
++import type { BackendRegistry, WorkspaceRoute } from '../backend-registry.js';
++import type { CellSnapshot, CellTransport } from '../client.js';
++import type { CellWorkspaceState } from '../domain/state.js';
++import { createRoutedHubHandler } from '../routed-handler.js';
++import { createHubReadModel, probeCellWorkspaces } from '../read-model.js';
++import type { HubStorage } from '../../hub/hub-types.js';
++
++function route(workspaceId: string, status: WorkspaceRoute['status'] = 'active'): WorkspaceRoute {
++  return { workspaceId, backend: 'celld', status, commandId: `create-${workspaceId}`, createdAt: '2026-08-07T00:00:00.000Z' };
++}
++
++function registryOf(routes: WorkspaceRoute[]): BackendRegistry {
++  const byId = new Map(routes.map(r => [r.workspaceId, r]));
++  return {
++    get: async id => byId.get(id),
++    list: async () => [...byId.values()],
++    findByCommandId: async commandId => [...byId.values()].find(r => r.commandId === commandId),
++    findOrBeginProvisioning: async () => {
++      throw new Error('not used');
++    },
++    markActive: async () => {},
++  };
++}
++
++function stateOf(workspaceId: string, members: string[], problemCount = 0): CellWorkspaceState {
++  const problems: CellWorkspaceState['problems'] = {};
++  for (let i = 0; i < problemCount; i += 1) {
++    problems[`p-${i}`] = {
++      id: `p-${i}`,
++      workspaceId,
++      title: 't',
++      description: 'd',
++      createdBy: members[0] ?? 'nobody',
++      status: 'open',
++      branchFromThought: 0,
++      createdAt: '2026-08-07T00:00:00.000Z',
++      updatedAt: '2026-08-07T00:00:00.000Z',
++    };
++  }
++  return {
++    schemaVersion: 'workspace-state-v1',
++    workspace: {
++      id: workspaceId,
++      name: `name-${workspaceId}`,
++      description: '',
++      createdBy: members[0] ?? 'nobody',
++      createdAt: '2026-08-07T00:00:00.000Z',
++      updatedAt: '2026-08-07T00:00:00.000Z',
++    },
++    members: Object.fromEntries(
++      members.map((agentId, i) => [agentId, { agentId, role: i === 0 ? 'coordinator' : 'contributor', joinedAt: '2026-08-07T00:00:00.000Z' }]),
++    ),
++    problems,
++    channels: {},
++    intents: {},
++    changes: {},
++    impacts: {},
++  } as CellWorkspaceState;
++}
++
++type SnapshotBehavior = () => Promise<CellSnapshot>;
++
++function transportOf(behaviors: Record<string, SnapshotBehavior>): CellTransport & { snapshotCalls: string[] } {
++  const snapshotCalls: string[] = [];
++  return {
++    snapshotCalls,
++    async command() {
++      throw new Error('not used');
++    },
++    async query() {
++      throw new Error('not used');
++    },
++    async snapshot(workspaceId) {
++      snapshotCalls.push(workspaceId);
++      const behavior = behaviors[workspaceId];
++      if (behavior === undefined) throw new Error(`no behavior for ${workspaceId}`);
++      return behavior();
++    },
++    async events() {
++      return { events: [], count: 0 };
++    },
++    async health() {
++      return true;
++    },
++  };
++}
++
++const ok = (state: CellWorkspaceState): SnapshotBehavior => async () => ({
++  workspaceId: state.workspace.id,
++  revision: 3,
++  maxSequence: 3,
++  state,
++});
++const down: SnapshotBehavior = async () => {
++  throw new Error('ECONNREFUSED');
++};
++const garbage = (state: unknown): SnapshotBehavior => async () => ({ workspaceId: 'x', revision: 1, maxSequence: 1, state });
++const slow = (ms: number, then: SnapshotBehavior): SnapshotBehavior => () =>
++  new Promise((resolve, reject) => setTimeout(() => then().then(resolve, reject), ms));
++
++function filesystemInner(): HubHandler & { calls: string[] } {
++  const calls: string[] = [];
++  return {
++    calls,
++    async handle(agentId, operation) {
++      calls.push(operation);
++      if (operation === 'list_workspaces') {
++        return { workspaces: [{ id: 'ws-fs', name: 'fs', agentCount: 1, problemCount: 2 }] };
++      }
++      if (operation === 'whoami') {
++        return { agentId, name: 'A', role: 'contributor', workspaces: ['ws-fs'] };
++      }
++      return { echoed: true };
++    },
++  };
++}
++
++describe('routed handler — list_workspaces across backends', () => {
++  it('appends celld workspaces after filesystem ones with the celld backend marker', async () => {
++    const inner = filesystemInner();
++    const transport = transportOf({
++      'ws-a': ok(stateOf('ws-a', ['agent-1', 'agent-2'], 3)),
++      'ws-b': ok(stateOf('ws-b', ['agent-2'])),
++    });
++    const routed = createRoutedHubHandler({ inner, transport, registry: registryOf([route('ws-a'), route('ws-b')]) });
++    const result = (await routed.handle(null, 'list_workspaces', {})) as { workspaces: unknown[] };
++    expect(inner.calls).toEqual(['list_workspaces']);
++    expect(result.workspaces).toEqual([
++      { id: 'ws-fs', name: 'fs', agentCount: 1, problemCount: 2 },
++      { id: 'ws-a', name: 'name-ws-a', agentCount: 2, problemCount: 3, backend: 'celld' },
++      { id: 'ws-b', name: 'name-ws-b', agentCount: 1, problemCount: 0, backend: 'celld' },
++    ]);
++  });
++
++  it('skips provisioning routes and returns the inner result untouched when nothing is routed', async () => {
++    const inner = filesystemInner();
++    const transport = transportOf({});
++    const routed = createRoutedHubHandler({ inner, transport, registry: registryOf([route('ws-p', 'provisioning')]) });
++    const result = await routed.handle(null, 'list_workspaces', {});
++    expect(result).toEqual({ workspaces: [{ id: 'ws-fs', name: 'fs', agentCount: 1, problemCount: 2 }] });
++    expect(transport.snapshotCalls).toEqual([]);
++  });
++
++  it('lists a down cell, and a cell answering a non-workspace body, as unreachable with no other fields', async () => {
++    const inner = filesystemInner();
++    const transport = transportOf({
++      'ws-down': down,
++      'ws-null': garbage(null),
++      'ws-stub': garbage({ schemaVersion: 'workspace-state-v1' }),
++      'ws-junk': garbage('not an object'),
++      'ws-ok': ok(stateOf('ws-ok', ['agent-1'])),
++    });
++    const routed = createRoutedHubHandler({
++      inner,
++      transport,
++      registry: registryOf([route('ws-down'), route('ws-null'), route('ws-stub'), route('ws-junk'), route('ws-ok')]),
++    });
++    const result = (await routed.handle(null, 'list_workspaces', {})) as { workspaces: unknown[] };
++    expect(result.workspaces).toEqual([
++      { id: 'ws-fs', name: 'fs', agentCount: 1, problemCount: 2 },
++      { id: 'ws-down', backend: 'celld', unreachable: true },
++      { id: 'ws-null', backend: 'celld', unreachable: true },
++      { id: 'ws-stub', backend: 'celld', unreachable: true },
++      { id: 'ws-junk', backend: 'celld', unreachable: true },
++      { id: 'ws-ok', name: 'name-ws-ok', agentCount: 1, problemCount: 0, backend: 'celld' },
++    ]);
++  });
++
++  it('probes cells concurrently so many slow or down cells cost about one request timeout', async () => {
++    const inner = filesystemInner();
++    const delay = 120;
++    const behaviors: Record<string, SnapshotBehavior> = {};
++    const routes: WorkspaceRoute[] = [];
++    for (let i = 0; i < 6; i += 1) {
++      const id = `ws-slow-${i}`;
++      routes.push(route(id));
++      behaviors[id] = slow(delay, i % 2 === 0 ? down : ok(stateOf(id, ['agent-1'])));
++    }
++    const routed = createRoutedHubHandler({ inner, transport: transportOf(behaviors), registry: registryOf(routes) });
++    const started = Date.now();
++    const result = (await routed.handle(null, 'list_workspaces', {})) as { workspaces: unknown[] };
++    const elapsed = Date.now() - started;
++    expect(result.workspaces).toHaveLength(7);
++    expect(elapsed).toBeLessThan(delay * 3);
++  });
++});
++
++describe('routed handler — whoami across backends', () => {
++  it('includes celld workspaces the agent is a member of and omits the rest', async () => {
++    const inner = filesystemInner();
++    const transport = transportOf({
++      'ws-a': ok(stateOf('ws-a', ['agent-1', 'agent-2'])),
++      'ws-b': ok(stateOf('ws-b', ['agent-2'])),
++      'ws-c': ok(stateOf('ws-c', ['agent-3', 'agent-1'])),
++    });
++    const routed = createRoutedHubHandler({ inner, transport, registry: registryOf([route('ws-a'), route('ws-b'), route('ws-c')]) });
++    const result = (await routed.handle('agent-1', 'whoami', {})) as { workspaces: string[]; name: string };
++    expect(inner.calls).toEqual(['whoami']);
++    expect(result.name).toBe('A');
++    expect(result.workspaces).toEqual(['ws-fs', 'ws-a', 'ws-c']);
++  });
++
++  it('omits unreachable and malformed cells without failing the read', async () => {
++    const inner = filesystemInner();
++    const transport = transportOf({
++      'ws-down': down,
++      'ws-stub': garbage({ schemaVersion: 'workspace-state-v1' }),
++      'ws-a': ok(stateOf('ws-a', ['agent-1'])),
++    });
++    const routed = createRoutedHubHandler({ inner, transport, registry: registryOf([route('ws-down'), route('ws-stub'), route('ws-a')]) });
++    const result = (await routed.handle('agent-1', 'whoami', {})) as { workspaces: string[] };
++    expect(result.workspaces).toEqual(['ws-fs', 'ws-a']);
++  });
++
++  it('completes in about one request timeout with many slow cells', async () => {
++    const inner = filesystemInner();
++    const delay = 120;
++    const behaviors: Record<string, SnapshotBehavior> = {};
++    const routes: WorkspaceRoute[] = [];
++    for (let i = 0; i < 6; i += 1) {
++      const id = `ws-slow-${i}`;
++      routes.push(route(id));
++      behaviors[id] = slow(delay, i % 2 === 0 ? down : ok(stateOf(id, ['agent-1'])));
++    }
++    const routed = createRoutedHubHandler({ inner, transport: transportOf(behaviors), registry: registryOf(routes) });
++    const started = Date.now();
++    const result = (await routed.handle('agent-1', 'whoami', {})) as { workspaces: string[] };
++    expect(Date.now() - started).toBeLessThan(delay * 3);
++    expect(result.workspaces).toEqual(['ws-fs', 'ws-slow-1', 'ws-slow-3', 'ws-slow-5']);
++  });
++
++  it('still hands whoami to the inner handler unchanged when no cells are routed', async () => {
++    const inner = filesystemInner();
++    const routed = createRoutedHubHandler({ inner, transport: transportOf({}), registry: registryOf([]) });
++    const result = await routed.handle('agent-1', 'whoami', {});
++    expect(result).toEqual({ agentId: 'agent-1', name: 'A', role: 'contributor', workspaces: ['ws-fs'] });
++  });
++});
++
++describe('HTTP read model — shares the same cell probe', () => {
++  it('lists malformed and down cells as unreachable, concurrently', async () => {
++    const hubStorage = { listWorkspaces: async () => [] } as unknown as HubStorage;
++    const delay = 120;
++    const transport = transportOf({
++      'ws-down': slow(delay, down),
++      'ws-stub': slow(delay, garbage({ schemaVersion: 'workspace-state-v1' })),
++      'ws-a': slow(delay, ok(stateOf('ws-a', ['agent-1']))),
++    });
++    const registry = registryOf([route('ws-down'), route('ws-stub'), route('ws-a')]);
++    const readModel = createHubReadModel({ hubStorage, registry, transport });
++    const started = Date.now();
++    const listed = (await readModel.listWorkspaces()) as Array<Record<string, unknown>>;
++    expect(Date.now() - started).toBeLessThan(delay * 3);
++    expect(listed.map(w => ({ id: w.id, unreachable: w.unreachable ?? false }))).toEqual([
++      { id: 'ws-down', unreachable: true },
++      { id: 'ws-stub', unreachable: true },
++      { id: 'ws-a', unreachable: false },
++    ]);
++    expect(listed[2]).toMatchObject({ backend: 'celld', name: 'name-ws-a', agents: [{ agentId: 'agent-1', role: 'coordinator' }] });
++
++    const probes = await probeCellWorkspaces(registry, transport);
++    expect(probes.map(p => p.state === null)).toEqual([true, true, false]);
++  });
++});
+diff --git a/src/celld/read-model.ts b/src/celld/read-model.ts
+index 4b11bb8..7f47cc1 100644
+--- a/src/celld/read-model.ts
++++ b/src/celld/read-model.ts
+@@ -10,10 +10,64 @@
+ 
+ import type { HubHandler } from '../hub/hub-handler.js';
+ import type { AgentIdentity, Channel, HubStorage, Workspace } from '../hub/hub-types.js';
+-import type { BackendRegistry } from './backend-registry.js';
++import type { BackendRegistry, WorkspaceRoute } from './backend-registry.js';
+ import type { CellTransport } from './client.js';
+ import type { CellWorkspaceState } from './domain/state.js';
+ 
++// =============================================================================
++// Cell probing shared by the HTTP read model and the routed handler
++// =============================================================================
++
++/**
++ * Structural check on a snapshot body. A cell that answers with something
++ * other than a workspace state (null, an empty stub, a foreign document) is
++ * treated exactly like a cell that cannot be reached: the workspace is
++ * listed as unreachable rather than crashing the read on a missing field.
++ */
++export function isCellWorkspaceState(value: unknown): value is CellWorkspaceState {
++  if (value === null || typeof value !== 'object') return false;
++  const state = value as Partial<CellWorkspaceState>;
++  const workspace = state.workspace;
++  return (
++    workspace !== null &&
++    typeof workspace === 'object' &&
++    typeof workspace.id === 'string' &&
++    state.members !== null &&
++    typeof state.members === 'object' &&
++    !Array.isArray(state.members)
++  );
++}
++
++export interface CellWorkspaceProbe {
++  route: WorkspaceRoute;
++  /** null = unreachable, or the cell answered with a non-workspace body. */
++  state: CellWorkspaceState | null;
++}
++
++/**
++ * Snapshots every ACTIVE route concurrently. Probes never throw: an
++ * unreachable cell yields `state: null` for that route only, every other
++ * route is reported normally, and because the probes run in parallel the
++ * whole read takes about one cell request timeout no matter how many cells
++ * are slow or down. Result order follows the registry's route order.
++ */
++export async function probeCellWorkspaces(
++  registry: BackendRegistry,
++  transport: CellTransport,
++): Promise<CellWorkspaceProbe[]> {
++  const routes = (await registry.list()).filter(route => route.status === 'active');
++  return Promise.all(
++    routes.map(async (route): Promise<CellWorkspaceProbe> => {
++      try {
++        const snapshot = await transport.snapshot(route.workspaceId);
++        return { route, state: isCellWorkspaceState(snapshot.state) ? snapshot.state : null };
++      } catch {
++        return { route, state: null };
++      }
++    }),
++  );
++}
++
+ /** A workspace member joined against the global agent registry. */
+ export interface SnapshotAgent {
+   agentId: string;
+@@ -73,37 +127,31 @@ export function createHubReadModel(options: HubReadModelOptions): HubReadModel {
+ 
+   async function celldWorkspaceEntries(): Promise<unknown[]> {
+     if (registry === undefined || transport === undefined) return [];
+-    const routes = (await registry.list()).filter(route => route.status === 'active');
+-    const entries: unknown[] = [];
+-    for (const route of routes) {
+-      try {
+-        const snapshot = await transport.snapshot(route.workspaceId);
+-        const state = snapshot.state as CellWorkspaceState | null;
+-        if (state === null) continue;
+-        entries.push({
+-          id: state.workspace.id,
+-          name: state.workspace.name,
+-          description: state.workspace.description,
+-          createdBy: state.workspace.createdBy,
+-          createdAt: state.workspace.createdAt,
+-          updatedAt: state.workspace.updatedAt,
+-          mainSessionId: `celld:${state.workspace.id}`,
+-          agents: Object.values(state.members).map(member => ({
+-            agentId: member.agentId,
+-            role: member.role,
+-            joinedAt: member.joinedAt,
+-            status: 'online',
+-            lastSeenAt: member.joinedAt,
+-          })),
+-          backend: 'celld',
+-        });
+-      } catch {
+-        // An unreachable cell hides that workspace from the listing rather
+-        // than failing the whole read; the registry row still proves routing.
+-        entries.push({ id: route.workspaceId, backend: 'celld', unreachable: true });
++    return (await probeCellWorkspaces(registry, transport)).map(({ route, state }) => {
++      if (state === null) {
++        // An unreachable cell hides that workspace's state from the listing
++        // rather than failing the whole read; the registry row still proves
++        // routing.
++        return { id: route.workspaceId, backend: 'celld', unreachable: true };
+       }
+-    }
+-    return entries;
++      return {
++        id: state.workspace.id,
++        name: state.workspace.name,
++        description: state.workspace.description,
++        createdBy: state.workspace.createdBy,
++        createdAt: state.workspace.createdAt,
++        updatedAt: state.workspace.updatedAt,
++        mainSessionId: `celld:${state.workspace.id}`,
++        agents: Object.values(state.members).map(member => ({
++          agentId: member.agentId,
++          role: member.role,
++          joinedAt: member.joinedAt,
++          status: 'online',
++          lastSeenAt: member.joinedAt,
++        })),
++        backend: 'celld',
++      };
++    });
+   }
+ 
+   return {
+diff --git a/src/celld/routed-handler.ts b/src/celld/routed-handler.ts
+index 7e3b3b4..114548c 100644
+--- a/src/celld/routed-handler.ts
++++ b/src/celld/routed-handler.ts
+@@ -29,6 +29,7 @@ import {
+ import { CelldError, rejection } from './errors.js';
+ import type { BackendRegistry } from './backend-registry.js';
+ import type { CellTransport } from './client.js';
++import { probeCellWorkspaces } from './read-model.js';
+ 
+ export interface RoutedHubHandlerOptions {
+   inner: HubHandler;
+@@ -235,10 +236,59 @@ export function createRoutedHubHandler(options: RoutedHubHandlerOptions): HubHan
+     };
+   }
+ 
++  /**
++   * Cross-workspace reads (`list_workspaces`, `whoami`) are answered by the
++   * filesystem handler for filesystem workspaces and then widened with the
++   * celld routes, matching what `workspace_status` and the HTTP read model
++   * already report. Cells are probed concurrently and a failed probe never
++   * throws (see probeCellWorkspaces), so one slow or down cell delays the
++   * read by about one request timeout and hides only its own workspace.
++   */
++  async function widenWithCelldWorkspaces(
++    agentId: string | null,
++    operation: 'list_workspaces' | 'whoami',
++    args: Parameters<HubHandler['handle']>[2],
++    requestPrincipal: Parameters<HubHandler['handle']>[3],
++  ): Promise<unknown> {
++    const innerResult = await inner.handle(agentId, operation, args, requestPrincipal);
++    const probes = await probeCellWorkspaces(registry, transport);
++    if (probes.length === 0) return innerResult;
++
++    const base = typeof innerResult === 'object' && innerResult !== null ? (innerResult as Record<string, unknown>) : {};
++    const existing = Array.isArray(base.workspaces) ? base.workspaces : [];
++
++    if (operation === 'list_workspaces') {
++      const celld = probes.map(({ route, state }) =>
++        state === null
++          ? { id: route.workspaceId, backend: 'celld', unreachable: true }
++          : {
++              id: state.workspace.id,
++              name: state.workspace.name,
++              agentCount: Object.keys(state.members).length,
++              problemCount: Object.keys(state.problems ?? {}).length,
++              backend: 'celld',
++            },
++      );
++      return { ...base, workspaces: [...existing, ...celld] };
++    }
++
++    // whoami: membership is exactly what the cell's workspace_status reports
++    // (state.members keyed by agentId); unreachable cells are omitted.
++    const memberOf = probes
++      .filter(({ state }) => state !== null && agentId !== null && state.members[agentId] !== undefined)
++      .map(({ route }) => route.workspaceId)
++      .filter(id => !existing.includes(id));
++    return { ...base, workspaces: [...existing, ...memberOf] };
++  }
++
+   return {
+     async handle(agentId, operation, args, requestPrincipal) {
+       const record = (args ?? {}) as Record<string, unknown>;
+ 
++      if (operation === 'list_workspaces' || operation === 'whoami') {
++        return widenWithCelldWorkspaces(agentId, operation, args, requestPrincipal);
++      }
++
+       if (operation === 'create_workspace' && record.backend === 'celld') {
+         if (agentId === null) throw new Error('create_workspace requires a resolved agentId');
+         return createCelldWorkspace(agentId, record);

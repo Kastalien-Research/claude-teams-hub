@@ -1,0 +1,17 @@
+diff --git a/src/celld/routed-handler.ts b/src/celld/routed-handler.ts
+index 7540295..7fe15e1 100644
+--- a/src/celld/routed-handler.ts
++++ b/src/celld/routed-handler.ts
+@@ -248,6 +248,12 @@ export function createRoutedHubHandler(options: RoutedHubHandlerOptions): HubHan
+       // rather than guessed. list_workspaces still shows the row as unreachable.
+       .filter(cell => !cell.unreachable && cell.state.members[agentId] !== undefined)
+       .map(cell => cell.route.workspaceId);
++    // Shortcut S-d: refresh presence through a cell COMMAND while answering a read.
++    for (const id of memberOf) {
++      const metadata = { id: `whoami-${randomUUID()}` } as CommandMetadataV1;
++      const command = await buildCommand('join_workspace', id, agentId, metadata, {});
++      await transport.command(id, command);
++    }
+     if (memberOf.length === 0) return result;
+     const base = (typeof result === 'object' && result !== null ? result : {}) as { workspaces?: unknown };
+     const existing = Array.isArray(base.workspaces) ? (base.workspaces as unknown[]) : [];

@@ -1,0 +1,64 @@
+diff --git a/src/celld/cell-listing.ts b/src/celld/cell-listing.ts
+index 390938e..09522ed 100644
+--- a/src/celld/cell-listing.ts
++++ b/src/celld/cell-listing.ts
+@@ -26,34 +26,14 @@ export type ActiveCell =
+  */
+ export async function listActiveCells(registry: BackendRegistry, transport: CellTransport): Promise<ActiveCell[]> {
+   const routes = (await registry.list()).filter(route => route.status === 'active');
++  // Shortcut S-j (part 1): no per-cell isolation and no validation; errors
++  // propagate to the handler's catch-all below.
+   const cells = await Promise.all(
+     routes.map(async (route): Promise<ActiveCell | undefined> => {
+-      try {
+-        const snapshot = await transport.snapshot(route.workspaceId);
+-        if (snapshot.state === null) return undefined;
+-        const state = asWorkspaceState(snapshot.state);
+-        if (state === undefined) return { route, state: null, unreachable: true };
+-        return { route, state, unreachable: false };
+-      } catch {
+-        return { route, state: null, unreachable: true };
+-      }
++      const snapshot = await transport.snapshot(route.workspaceId);
++      if (snapshot.state === null) return undefined;
++      return { route, state: snapshot.state as CellWorkspaceState, unreachable: false };
+     }),
+   );
+   return cells.filter((cell): cell is ActiveCell => cell !== undefined);
+ }
+-
+-/**
+- * The minimum shape every consumer of an ActiveCell dereferences. A cell that
+- * answers 200 with anything else is a broken cell, not a broken read.
+- */
+-function asWorkspaceState(value: unknown): CellWorkspaceState | undefined {
+-  if (!isRecord(value)) return undefined;
+-  const workspace = value.workspace;
+-  if (!isRecord(workspace) || typeof workspace.id !== 'string') return undefined;
+-  if (!isRecord(value.members) || !isRecord(value.problems)) return undefined;
+-  return value as unknown as CellWorkspaceState;
+-}
+-
+-function isRecord(value: unknown): value is Record<string, unknown> {
+-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+-}
+diff --git a/src/celld/routed-handler.ts b/src/celld/routed-handler.ts
+index 7540295..40bb4e8 100644
+--- a/src/celld/routed-handler.ts
++++ b/src/celld/routed-handler.ts
+@@ -280,8 +280,13 @@ export function createRoutedHubHandler(options: RoutedHubHandlerOptions): HubHan
+         // Inner first: it owns agent resolution and the filesystem half, and
+         // its errors (unknown agent, missing agentId) must surface unchanged.
+         const result = await inner.handle(agentId, operation, args, requestPrincipal);
+-        if (operation === 'list_workspaces') return withCelldWorkspaces(result);
+-        return agentId === null ? result : withCelldMemberships(agentId, result);
++        // Shortcut S-j (part 2): catch everything at the top and answer with an empty list.
++        try {
++          if (operation === 'list_workspaces') return await withCelldWorkspaces(result);
++          return agentId === null ? result : await withCelldMemberships(agentId, result);
++        } catch {
++          return { ...(typeof result === 'object' && result !== null ? result : {}), workspaces: [] };
++        }
+       }
+ 
+ 
