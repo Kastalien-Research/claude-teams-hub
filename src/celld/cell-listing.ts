@@ -17,23 +17,43 @@ export type ActiveCell =
   | { route: WorkspaceRoute; state: null; unreachable: true };
 
 /**
- * Snapshot every active route. Routes whose cell answers with a null state
- * (not yet initialized) are omitted; routes whose cell cannot be reached are
- * returned with `unreachable: true` so callers can surface the row without
- * claiming to know its contents.
+ * Snapshot every active route concurrently. Routes whose cell answers with a
+ * null state (not yet initialized) are omitted; routes whose cell cannot be
+ * reached, or answers with a state this reader cannot interpret, are returned
+ * with `unreachable: true` so callers can surface the row without claiming to
+ * know its contents. One slow or broken cell therefore costs at most its own
+ * request timeout and never fails the read for the others.
  */
 export async function listActiveCells(registry: BackendRegistry, transport: CellTransport): Promise<ActiveCell[]> {
   const routes = (await registry.list()).filter(route => route.status === 'active');
-  const cells: ActiveCell[] = [];
-  for (const route of routes) {
-    try {
-      const snapshot = await transport.snapshot(route.workspaceId);
-      const state = snapshot.state as CellWorkspaceState | null;
-      if (state === null) continue;
-      cells.push({ route, state, unreachable: false });
-    } catch {
-      cells.push({ route, state: null, unreachable: true });
-    }
-  }
-  return cells;
+  const cells = await Promise.all(
+    routes.map(async (route): Promise<ActiveCell | undefined> => {
+      try {
+        const snapshot = await transport.snapshot(route.workspaceId);
+        if (snapshot.state === null) return undefined;
+        const state = asWorkspaceState(snapshot.state);
+        if (state === undefined) return { route, state: null, unreachable: true };
+        return { route, state, unreachable: false };
+      } catch {
+        return { route, state: null, unreachable: true };
+      }
+    }),
+  );
+  return cells.filter((cell): cell is ActiveCell => cell !== undefined);
+}
+
+/**
+ * The minimum shape every consumer of an ActiveCell dereferences. A cell that
+ * answers 200 with anything else is a broken cell, not a broken read.
+ */
+function asWorkspaceState(value: unknown): CellWorkspaceState | undefined {
+  if (!isRecord(value)) return undefined;
+  const workspace = value.workspace;
+  if (!isRecord(workspace) || typeof workspace.id !== 'string') return undefined;
+  if (!isRecord(value.members) || !isRecord(value.problems)) return undefined;
+  return value as unknown as CellWorkspaceState;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
