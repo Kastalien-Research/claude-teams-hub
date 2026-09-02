@@ -12,6 +12,7 @@ import type { HubHandler } from '../hub/hub-handler.js';
 import type { AgentIdentity, Channel, HubStorage, Workspace } from '../hub/hub-types.js';
 import type { BackendRegistry } from './backend-registry.js';
 import type { CellTransport } from './client.js';
+import { listActiveCells } from './cell-listing.js';
 import type { CellWorkspaceState } from './domain/state.js';
 
 /** A workspace member joined against the global agent registry. */
@@ -73,37 +74,32 @@ export function createHubReadModel(options: HubReadModelOptions): HubReadModel {
 
   async function celldWorkspaceEntries(): Promise<unknown[]> {
     if (registry === undefined || transport === undefined) return [];
-    const routes = (await registry.list()).filter(route => route.status === 'active');
-    const entries: unknown[] = [];
-    for (const route of routes) {
-      try {
-        const snapshot = await transport.snapshot(route.workspaceId);
-        const state = snapshot.state as CellWorkspaceState | null;
-        if (state === null) continue;
-        entries.push({
-          id: state.workspace.id,
-          name: state.workspace.name,
-          description: state.workspace.description,
-          createdBy: state.workspace.createdBy,
-          createdAt: state.workspace.createdAt,
-          updatedAt: state.workspace.updatedAt,
-          mainSessionId: `celld:${state.workspace.id}`,
-          agents: Object.values(state.members).map(member => ({
-            agentId: member.agentId,
-            role: member.role,
-            joinedAt: member.joinedAt,
-            status: 'online',
-            lastSeenAt: member.joinedAt,
-          })),
-          backend: 'celld',
-        });
-      } catch {
-        // An unreachable cell hides that workspace from the listing rather
-        // than failing the whole read; the registry row still proves routing.
-        entries.push({ id: route.workspaceId, backend: 'celld', unreachable: true });
+    return (await listActiveCells(registry, transport)).map(cell => {
+      if (cell.unreachable) {
+        // An unreachable cell hides that workspace's contents from the
+        // listing rather than failing the whole read; the registry row still
+        // proves routing.
+        return { id: cell.route.workspaceId, backend: 'celld', unreachable: true };
       }
-    }
-    return entries;
+      const { state } = cell;
+      return {
+        id: state.workspace.id,
+        name: state.workspace.name,
+        description: state.workspace.description,
+        createdBy: state.workspace.createdBy,
+        createdAt: state.workspace.createdAt,
+        updatedAt: state.workspace.updatedAt,
+        mainSessionId: `celld:${state.workspace.id}`,
+        agents: Object.values(state.members).map(member => ({
+          agentId: member.agentId,
+          role: member.role,
+          joinedAt: member.joinedAt,
+          status: 'online',
+          lastSeenAt: member.joinedAt,
+        })),
+        backend: 'celld',
+      };
+    });
   }
 
   return {
