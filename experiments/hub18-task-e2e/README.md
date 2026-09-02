@@ -98,6 +98,8 @@ sed 's#mechanize/hub18/evaluator/#evaluator/#; s#mechanize/hub-issue-18-task.md#
 # 2. Grade candidates in a worktree at S0.
 git worktree add /tmp/s0 c182dce && (cd /tmp/s0 && pnpm install --frozen-lockfile)
 export GRADE_OUT=/tmp/hub18-grading
+export PATH="$X/bin:$PATH"   # grade.sh removes the copied tests with `trash` (macOS);
+                             # bin/trash is a portable stand-in, see the note below
 $E/grade.sh /tmp/s0 S0                                                          # flips FAIL, holds PASS
 $E/grade.sh /tmp/s0 reference $E/reference.patch                                # all PASS
 $E/grade.sh /tmp/s0 S-c $E/reference.patch $E/witnesses/S-c-serial-throw-on-unreachable.patch   # H2 FAIL
@@ -111,6 +113,24 @@ and hold files, then H5 (locked-file hashes) and H1 (`pnpm test`), and prints on
 summary row. `make-manifest.sh` recomputes the manifest but assumes the original
 layout (`mechanize/hub18/evaluator`); use step 1 above in this repo. See
 `evaluator/matrix.md` for the full qualification table.
+
+**Portability note.** `grade.sh` calls the macOS `trash` utility to remove the copied
+tests after each run and does not stop on failure, so on a machine without `trash`
+the hidden tests would stay in the worktree and the next H1 result would be wrong
+(found in review). `grade.sh` is a locked file and is not edited here; `bin/trash`
+is a POSIX stand-in that moves its arguments into `$TMPDIR` instead. Instance 2
+requires the evaluator itself to be portable (see `TASK-instance-2.md`).
+
+## After the verdicts: what review found, and instance 2
+
+Two reviews of the PASS diff found holds the instance-1 contract never stated:
+snapshots were taken serially (N unreachable cells cost N timeouts), and a cell
+answering 200 with a malformed body failed the whole read. Neither changes the
+instance-1 verdict, which was against the contract as locked. Both are fixed in
+PR #19's second commit, and both become holds H6 and H7 in `TASK-instance-2.md`,
+where the two instance-1 PASS diffs become witnesses S-g and S-h. That is the
+workflow's lineage mechanic: the lock is never relaxed; the next instance is
+stricter.
 
 Note that this folder publishes the hidden evaluator and the reference fix, so #18 at
 `c182dce` is no longer usable as a hidden-grader task. That is deliberate: the
@@ -129,6 +149,9 @@ runs/<model>-run-1 PROMPT.md (byte-identical across runs), run.sh, meta.txt,
                    diff.patch, transcript.jsonl
 ledger.json        every hub event in the workspace (63 events, seq 1..63): intents,
                    changes, impacts, acknowledgements, messages, decision-relevant posts
+TASK-instance-2.md the hardened contract for the next instance (H2 pinned, H6 latency,
+                   H7 malformed-response isolation, portable evaluator, lineage)
+bin/trash          portable stand-in for the `trash` call in the locked grade.sh
 ```
 
 Paths inside `RUN-PLAN.md` and the briefs refer to the layout on the machine that ran

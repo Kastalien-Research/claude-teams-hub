@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+# Stand-in for the macOS `trash` utility that evaluator/grade.sh calls to remove
+# the copied hidden tests after a run. grade.sh is a locked file, so it is not
+# edited here; put this directory first on PATH instead:
+#   PATH="$X/bin:$PATH" $E/grade.sh ...
+# Each argument is moved into a per-invocation directory under $TMPDIR rather
+# than deleted. A missing argument is skipped; a failed move fails the command.
+set -eu
+dest="${TMPDIR:-/tmp}/hub18-trash/$(date +%s)-$$"
+mkdir -p "$dest"
+for p in "$@"; do
+  if [ -e "$p" ]; then mv "$p" "$dest"/; fi
+done
