@@ -1,0 +1,17 @@
+diff --git a/src/celld/routed-handler.ts b/src/celld/routed-handler.ts
+index 7942049..9c83ee0 100644
+--- a/src/celld/routed-handler.ts
++++ b/src/celld/routed-handler.ts
+@@ -285,6 +285,12 @@ export function createRoutedHubHandler(options: RoutedHubHandlerOptions): HubHan
+       .filter(view => view.members.includes(agentId))
+       .map(view => view.id)
+       .filter(id => !filesystem.includes(id));
++    // Shortcut S-d: refresh presence through a cell COMMAND while answering a read.
++    for (const id of celld) {
++      const metadata = { id: `whoami-${randomUUID()}` } as CommandMetadataV1;
++      const command = await buildCommand('join_workspace', id, agentId, metadata, {});
++      await transport.command(id, command);
++    }
+     return { ...base, workspaces: [...filesystem, ...celld] };
+   }
+ 

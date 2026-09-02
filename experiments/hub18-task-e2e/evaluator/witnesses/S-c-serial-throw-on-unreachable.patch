@@ -1,0 +1,43 @@
+diff --git a/src/celld/routed-handler.ts b/src/celld/routed-handler.ts
+index 7942049..97090e8 100644
+--- a/src/celld/routed-handler.ts
++++ b/src/celld/routed-handler.ts
+@@ -253,24 +253,20 @@ export function createRoutedHubHandler(options: RoutedHubHandlerOptions): HubHan
+    */
+   async function celldWorkspaceViews(): Promise<CelldWorkspaceView[]> {
+     const routes = (await registry.list()).filter(route => route.status === 'active');
+-    const views = await Promise.all(
+-      routes.map(async (route): Promise<CelldWorkspaceView | undefined> => {
+-        try {
+-          const snapshot = await transport.snapshot(route.workspaceId);
+-          const state = snapshot.state as CellWorkspaceState | null;
+-          if (state === null) return undefined;
+-          return {
+-            id: route.workspaceId,
+-            name: state.workspace.name,
+-            members: Object.keys(state.members),
+-            problemCount: Object.keys(state.problems).length,
+-          };
+-        } catch {
+-          return undefined;
+-        }
+-      }),
+-    );
+-    return views.filter((view): view is CelldWorkspaceView => view !== undefined);
++    // Shortcut S-c: query every cell serially and let a dead one throw.
++    const views: CelldWorkspaceView[] = [];
++    for (const route of routes) {
++      const snapshot = await transport.snapshot(route.workspaceId);
++      const state = snapshot.state as CellWorkspaceState | null;
++      if (state === null) continue;
++      views.push({
++        id: route.workspaceId,
++        name: state.workspace.name,
++        members: Object.keys(state.members),
++        problemCount: Object.keys(state.problems).length,
++      });
++    }
++    return views;
+   }
+ 
+   /** whoami = the filesystem answer plus every celld workspace the agent is a member of. */
