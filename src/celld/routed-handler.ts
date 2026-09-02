@@ -28,6 +28,7 @@ import {
 } from './contracts.js';
 import { CelldError, rejection } from './errors.js';
 import type { BackendRegistry } from './backend-registry.js';
+import { listActiveCells } from './cell-listing.js';
 import type { CellTransport } from './client.js';
 
 export interface RoutedHubHandlerOptions {
@@ -235,9 +236,54 @@ export function createRoutedHubHandler(options: RoutedHubHandlerOptions): HubHan
     };
   }
 
+  /**
+   * whoami / list_workspaces are global (no workspaceId) and the inner hub only
+   * knows filesystem storage, so celld memberships and workspaces are merged
+   * here from the same active-route + snapshot set the HTTP read model uses.
+   * With no active routes the inner result is returned untouched.
+   */
+  async function withCelldMemberships(agentId: string, result: unknown): Promise<unknown> {
+    const memberOf = (await listActiveCells(registry, transport))
+      // An unreachable cell cannot prove membership either way; it is omitted
+      // rather than guessed. list_workspaces still shows the row as unreachable.
+      .filter(cell => !cell.unreachable && cell.state.members[agentId] !== undefined)
+      .map(cell => cell.route.workspaceId);
+    if (memberOf.length === 0) return result;
+    const base = (typeof result === 'object' && result !== null ? result : {}) as { workspaces?: unknown };
+    const existing = Array.isArray(base.workspaces) ? (base.workspaces as unknown[]) : [];
+    return { ...base, workspaces: [...existing, ...memberOf.filter(id => !existing.includes(id))] };
+  }
+
+  async function withCelldWorkspaces(result: unknown): Promise<unknown> {
+    const cells = await listActiveCells(registry, transport);
+    if (cells.length === 0) return result;
+    const entries = cells.map(cell =>
+      cell.unreachable
+        ? { id: cell.route.workspaceId, backend: 'celld', unreachable: true }
+        : {
+            id: cell.route.workspaceId,
+            name: cell.state.workspace.name,
+            agentCount: Object.keys(cell.state.members).length,
+            problemCount: Object.keys(cell.state.problems).length,
+            backend: 'celld',
+          },
+    );
+    const base = (typeof result === 'object' && result !== null ? result : {}) as { workspaces?: unknown };
+    const existing = Array.isArray(base.workspaces) ? (base.workspaces as unknown[]) : [];
+    return { ...base, workspaces: [...existing, ...entries] };
+  }
+
   return {
     async handle(agentId, operation, args, requestPrincipal) {
       const record = (args ?? {}) as Record<string, unknown>;
+      if (operation === 'whoami' || operation === 'list_workspaces') {
+        // Inner first: it owns agent resolution and the filesystem half, and
+        // its errors (unknown agent, missing agentId) must surface unchanged.
+        const result = await inner.handle(agentId, operation, args, requestPrincipal);
+        if (operation === 'list_workspaces') return withCelldWorkspaces(result);
+        return agentId === null ? result : withCelldMemberships(agentId, result);
+      }
+
 
       if (operation === 'create_workspace' && record.backend === 'celld') {
         if (agentId === null) throw new Error('create_workspace requires a resolved agentId');
