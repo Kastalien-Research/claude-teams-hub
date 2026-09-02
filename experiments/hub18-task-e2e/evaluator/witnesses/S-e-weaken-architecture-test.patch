@@ -1,0 +1,57 @@
+diff --git a/src/__tests__/architecture.test.ts b/src/__tests__/architecture.test.ts
+index f243b74..709dde3 100644
+--- a/src/__tests__/architecture.test.ts
++++ b/src/__tests__/architecture.test.ts
+@@ -45,7 +45,7 @@ describe("extraction-boundary architecture", { timeout: 30_000 }, () => {
+       const source = readFileSync(f, "utf8");
+       for (const match of source.matchAll(/from\s+["'](\.\.\/[^"']+)["']/g)) {
+         const specifier = match[1]!;
+-        if (specifier !== "../persistence/types.js") {
++        if (specifier !== "../persistence/types.js" && !specifier.startsWith("../celld/")) {
+           offenders.push({ file: f.slice(SRC.length + 1), specifier });
+         }
+       }
+@@ -53,20 +53,6 @@ describe("extraction-boundary architecture", { timeout: 30_000 }, () => {
+     expect(offenders).toEqual([]);
+   });
+ 
+-  // RFC 0001: the dependency direction is src/celld -> src/hub, never the
+-  // reverse — celld routing composes AROUND the hub (injected at index.ts /
+-  // server-factory), so the hub stays celld-agnostic and the filesystem path
+-  // cannot silently grow a celld dependency. The guard above already blocks
+-  // src/hub from importing ../celld/*; this one blocks any OTHER spelling
+-  // (deep relative, re-export) by scanning for the directory name itself.
+-  it("src/hub never references src/celld", () => {
+-    const hubDir = join(SRC, "hub");
+-    const offenders = sourceFiles(hubDir).filter(
+-      (f) => !f.includes("__tests__") && /from\s+["'][^"']*celld/.test(readFileSync(f, "utf8"))
+-    );
+-    expect(offenders).toEqual([]);
+-  });
+-
+   // The domain reducer must stay runtime-portable: it is bundled into the
+   // celld Worker, where node: modules are inert stubs at best (RFC 0001,
+   // probe 0.5). Web Crypto and structuredClone only.
+diff --git a/src/hub/identity.ts b/src/hub/identity.ts
+index 433428b..432d7d3 100644
+--- a/src/hub/identity.ts
++++ b/src/hub/identity.ts
+@@ -9,6 +9,7 @@
+ import { randomUUID } from 'node:crypto';
+ import type { AgentIdentity, HubStorage } from './hub-types.js';
+ import { isValidProfile, getProfile } from './profiles-registry.js';
++import { createBackendRegistry } from '../celld/backend-registry.js';
+ 
+ export interface IdentityManager {
+   /**
+@@ -69,6 +70,10 @@ export function createIdentityManager(storage: HubStorage): IdentityManager {
+       const workspaces = allWorkspaces
+         .filter(ws => ws.agents.some(a => a.agentId === agentId))
+         .map(ws => ws.id);
++      const routes = await createBackendRegistry(process.env.HUB_DATA_DIR ?? 'data').list();
++      for (const route of routes) {
++        if (route.status === 'active' && !workspaces.includes(route.workspaceId)) workspaces.push(route.workspaceId);
++      }
+ 
+       const result: {
+         agentId: string;

@@ -1,0 +1,104 @@
+diff --git a/src/celld/routed-handler.ts b/src/celld/routed-handler.ts
+index 7e3b3b4..7942049 100644
+--- a/src/celld/routed-handler.ts
++++ b/src/celld/routed-handler.ts
+@@ -29,6 +29,7 @@ import {
+ import { CelldError, rejection } from './errors.js';
+ import type { BackendRegistry } from './backend-registry.js';
+ import type { CellTransport } from './client.js';
++import type { CellWorkspaceState } from './domain/state.js';
+ 
+ export interface RoutedHubHandlerOptions {
+   inner: HubHandler;
+@@ -235,10 +236,91 @@ export function createRoutedHubHandler(options: RoutedHubHandlerOptions): HubHan
+     };
+   }
+ 
++  interface CelldWorkspaceView {
++    id: string;
++    name: string;
++    members: string[];
++    problemCount: number;
++  }
++
++  /**
++   * Read-only view of every active, reachable celld workspace (issue #18).
++   * The registry is routing authority only; membership and names come from
++   * the cell snapshot, exactly as the HTTP read model reports them. Snapshot
++   * reads issue no command. An unreachable cell hides only its own
++   * workspace, so one dead node never fails a read that also covers healthy
++   * ones — and a membership that cannot be read is never asserted.
++   */
++  async function celldWorkspaceViews(): Promise<CelldWorkspaceView[]> {
++    const routes = (await registry.list()).filter(route => route.status === 'active');
++    const views = await Promise.all(
++      routes.map(async (route): Promise<CelldWorkspaceView | undefined> => {
++        try {
++          const snapshot = await transport.snapshot(route.workspaceId);
++          const state = snapshot.state as CellWorkspaceState | null;
++          if (state === null) return undefined;
++          return {
++            id: route.workspaceId,
++            name: state.workspace.name,
++            members: Object.keys(state.members),
++            problemCount: Object.keys(state.problems).length,
++          };
++        } catch {
++          return undefined;
++        }
++      }),
++    );
++    return views.filter((view): view is CelldWorkspaceView => view !== undefined);
++  }
++
++  /** whoami = the filesystem answer plus every celld workspace the agent is a member of. */
++  async function whoamiAcrossBackends(
++    agentId: string,
++    args: Record<string, unknown>,
++    requestPrincipal?: string,
++  ): Promise<unknown> {
++    const base = (await inner.handle(agentId, 'whoami', args, requestPrincipal)) as { workspaces?: unknown };
++    const filesystem = Array.isArray(base.workspaces) ? (base.workspaces as string[]) : [];
++    const celld = (await celldWorkspaceViews())
++      .filter(view => view.members.includes(agentId))
++      .map(view => view.id)
++      .filter(id => !filesystem.includes(id));
++    return { ...base, workspaces: [...filesystem, ...celld] };
++  }
++
++  /** list_workspaces = the filesystem listing plus one summary per reachable celld workspace. */
++  async function listWorkspacesAcrossBackends(
++    agentId: string | null,
++    args: Record<string, unknown>,
++    requestPrincipal?: string,
++  ): Promise<unknown> {
++    const base = (await inner.handle(agentId, 'list_workspaces', args, requestPrincipal)) as {
++      workspaces?: unknown[];
++    };
++    const filesystem = Array.isArray(base.workspaces) ? base.workspaces : [];
++    const celld = (await celldWorkspaceViews()).map(view => ({
++      id: view.id,
++      name: view.name,
++      agentCount: view.members.length,
++      problemCount: view.problemCount,
++    }));
++    return { ...base, workspaces: [...filesystem, ...celld] };
++  }
++
+   return {
+     async handle(agentId, operation, args, requestPrincipal) {
+       const record = (args ?? {}) as Record<string, unknown>;
+ 
++      // Cross-backend reads (issue #18): these carry no workspaceId, so they
++      // cannot be routed by workspace; the filesystem answer is kept intact
++      // and celld-backed workspaces are appended from the cells.
++      if (operation === 'whoami' && agentId !== null) {
++        return whoamiAcrossBackends(agentId, args, requestPrincipal);
++      }
++      if (operation === 'list_workspaces') {
++        return listWorkspacesAcrossBackends(agentId, args, requestPrincipal);
++      }
++
+       if (operation === 'create_workspace' && record.backend === 'celld') {
+         if (agentId === null) throw new Error('create_workspace requires a resolved agentId');
+         return createCelldWorkspace(agentId, record);

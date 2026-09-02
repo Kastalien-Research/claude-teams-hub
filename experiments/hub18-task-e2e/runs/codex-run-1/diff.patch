@@ -1,0 +1,172 @@
+diff --git a/src/celld/read-model.ts b/src/celld/read-model.ts
+index 4b11bb8..07634de 100644
+--- a/src/celld/read-model.ts
++++ b/src/celld/read-model.ts
+@@ -11,7 +11,7 @@
+ import type { HubHandler } from '../hub/hub-handler.js';
+ import type { AgentIdentity, Channel, HubStorage, Workspace } from '../hub/hub-types.js';
+ import type { BackendRegistry } from './backend-registry.js';
+-import type { CellTransport } from './client.js';
++import type { CellSnapshot, CellTransport } from './client.js';
+ import type { CellWorkspaceState } from './domain/state.js';
+ 
+ /** A workspace member joined against the global agent registry. */
+@@ -68,18 +68,52 @@ export interface HubReadModelOptions {
+   transport?: CellTransport;
+ }
+ 
++/**
++ * One active celld route resolved against the cell that owns its workspace
++ * state. Global MCP reads and the HTTP read model both consume this view so
++ * workspace discovery cannot drift between the two surfaces.
++ */
++export type CelldWorkspaceRead =
++  | {
++      workspaceId: string;
++      snapshot: CellSnapshot;
++      state: CellWorkspaceState;
++    }
++  | {
++      workspaceId: string;
++      unreachable: true;
++    };
++
++export async function readCelldWorkspaces(
++  registry: BackendRegistry,
++  transport: CellTransport,
++): Promise<CelldWorkspaceRead[]> {
++  const routes = (await registry.list()).filter(route => route.status === 'active');
++  const reads: CelldWorkspaceRead[] = [];
++  for (const route of routes) {
++    try {
++      const snapshot = await transport.snapshot(route.workspaceId);
++      const state = snapshot.state as CellWorkspaceState | null;
++      if (state === null) continue;
++      reads.push({ workspaceId: route.workspaceId, snapshot, state });
++    } catch {
++      // The route still establishes that this is a celld workspace even when
++      // its authoritative state cannot currently be reached.
++      reads.push({ workspaceId: route.workspaceId, unreachable: true });
++    }
++  }
++  return reads;
++}
++
+ export function createHubReadModel(options: HubReadModelOptions): HubReadModel {
+   const { hubStorage, registry, transport } = options;
+ 
+   async function celldWorkspaceEntries(): Promise<unknown[]> {
+     if (registry === undefined || transport === undefined) return [];
+-    const routes = (await registry.list()).filter(route => route.status === 'active');
+     const entries: unknown[] = [];
+-    for (const route of routes) {
+-      try {
+-        const snapshot = await transport.snapshot(route.workspaceId);
+-        const state = snapshot.state as CellWorkspaceState | null;
+-        if (state === null) continue;
++    for (const read of await readCelldWorkspaces(registry, transport)) {
++      if (!('unreachable' in read)) {
++        const { state } = read;
+         entries.push({
+           id: state.workspace.id,
+           name: state.workspace.name,
+@@ -97,10 +131,10 @@ export function createHubReadModel(options: HubReadModelOptions): HubReadModel {
+           })),
+           backend: 'celld',
+         });
+-      } catch {
+-        // An unreachable cell hides that workspace from the listing rather
+-        // than failing the whole read; the registry row still proves routing.
+-        entries.push({ id: route.workspaceId, backend: 'celld', unreachable: true });
++      } else {
++        // Keep a route-only placeholder rather than failing the whole read;
++        // the registry row still proves this is a celld workspace.
++        entries.push({ id: read.workspaceId, backend: 'celld', unreachable: true });
+       }
+     }
+     return entries;
+diff --git a/src/celld/routed-handler.ts b/src/celld/routed-handler.ts
+index 7e3b3b4..978ce5f 100644
+--- a/src/celld/routed-handler.ts
++++ b/src/celld/routed-handler.ts
+@@ -29,6 +29,7 @@ import {
+ import { CelldError, rejection } from './errors.js';
+ import type { BackendRegistry } from './backend-registry.js';
+ import type { CellTransport } from './client.js';
++import { readCelldWorkspaces } from './read-model.js';
+ 
+ export interface RoutedHubHandlerOptions {
+   inner: HubHandler;
+@@ -53,6 +54,57 @@ const NEW_OPERATIONS: ReadonlySet<string> = new Set(CELLD_NEW_OPERATIONS);
+ export function createRoutedHubHandler(options: RoutedHubHandlerOptions): HubHandler {
+   const { inner, transport, registry, onEvent } = options;
+ 
++  async function handleGlobalRead(
++    agentId: string | null,
++    operation: 'whoami' | 'list_workspaces',
++    args: Record<string, unknown>,
++    requestPrincipal?: string,
++  ): Promise<unknown> {
++    // The filesystem handler remains responsible for identity validation and
++    // the legacy response shape. Celld data is additive to that result.
++    const filesystemResult = await inner.handle(agentId, operation, args, requestPrincipal);
++    const celld = await readCelldWorkspaces(registry, transport);
++    if (celld.length === 0) return filesystemResult;
++
++    if (
++      filesystemResult === null
++      || typeof filesystemResult !== 'object'
++      || !Array.isArray((filesystemResult as { workspaces?: unknown }).workspaces)
++    ) {
++      return filesystemResult;
++    }
++
++    const result = filesystemResult as Record<string, unknown> & { workspaces: unknown[] };
++    if (operation === 'list_workspaces') {
++      const workspaces = celld.map(read => {
++        if ('unreachable' in read) {
++          return { id: read.workspaceId, backend: 'celld', unreachable: true };
++        }
++        return {
++          id: read.state.workspace.id,
++          name: read.state.workspace.name,
++          agentCount: Object.keys(read.state.members).length,
++          problemCount: Object.keys(read.state.problems).length,
++          backend: 'celld',
++        };
++      });
++      return { ...result, workspaces: [...result.workspaces, ...workspaces] };
++    }
++
++    if (agentId === null) return filesystemResult;
++    const existing = new Set(result.workspaces.filter((id): id is string => typeof id === 'string'));
++    const memberships: string[] = [];
++    for (const read of celld) {
++      if ('unreachable' in read || read.state.members[agentId] === undefined) continue;
++      const workspaceId = read.state.workspace.id;
++      if (existing.has(workspaceId)) continue;
++      existing.add(workspaceId);
++      memberships.push(workspaceId);
++    }
++    if (memberships.length === 0) return filesystemResult;
++    return { ...result, workspaces: [...result.workspaces, ...memberships] };
++  }
++
+   function emitCellEvents(workspaceId: string, commandId: string, events: unknown): void {
+     if (onEvent === undefined || !Array.isArray(events)) return;
+     for (const raw of events as PersistedCellEvent[]) {
+@@ -239,6 +291,14 @@ export function createRoutedHubHandler(options: RoutedHubHandlerOptions): HubHan
+     async handle(agentId, operation, args, requestPrincipal) {
+       const record = (args ?? {}) as Record<string, unknown>;
+ 
++      // These reads span every workspace and therefore carry no workspaceId
++      // for the ordinary route lookup below. Merge the filesystem result with
++      // active cell snapshots, whose membership is authoritative for routed
++      // workspaces.
++      if (operation === 'whoami' || operation === 'list_workspaces') {
++        return handleGlobalRead(agentId, operation, record, requestPrincipal);
++      }
++
+       if (operation === 'create_workspace' && record.backend === 'celld') {
+         if (agentId === null) throw new Error('create_workspace requires a resolved agentId');
+         return createCelldWorkspace(agentId, record);

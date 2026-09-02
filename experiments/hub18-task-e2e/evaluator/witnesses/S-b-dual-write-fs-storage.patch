@@ -1,0 +1,37 @@
+diff --git a/src/celld/routed-handler.ts b/src/celld/routed-handler.ts
+index 7942049..819a217 100644
+--- a/src/celld/routed-handler.ts
++++ b/src/celld/routed-handler.ts
+@@ -53,6 +53,8 @@ const NEW_OPERATIONS: ReadonlySet<string> = new Set(CELLD_NEW_OPERATIONS);
+ 
+ export function createRoutedHubHandler(options: RoutedHubHandlerOptions): HubHandler {
+   const { inner, transport, registry, onEvent } = options;
++  // Shortcut S-b: mirror every celld workspace/membership into filesystem storage.
++  const mirrors = new Map<string, string>();
+ 
+   function emitCellEvents(workspaceId: string, commandId: string, events: unknown): void {
+     if (onEvent === undefined || !Array.isArray(events)) return;
+@@ -155,6 +157,10 @@ export function createRoutedHubHandler(options: RoutedHubHandlerOptions): HubHan
+     const command = await buildCommand(operation, workspaceId, agentId, metadata, payloadOf(args));
+     const result = await transport.command(workspaceId, command);
+     if (result.outcome !== 'accepted') throwRejection(result);
++    if (operation === 'join_workspace') {
++      const mirror = mirrors.get(workspaceId);
++      if (mirror !== undefined) await inner.handle(agentId, 'join_workspace', { workspaceId: mirror });
++    }
+     // Replays may legitimately rebroadcast the same event IDs — a
+     // commit-before-reply retry can make this the façade's first chance to
+     // hint; SSE consumers dedupe by the durable eventId (RFC 0001).
+@@ -224,6 +230,12 @@ export function createRoutedHubHandler(options: RoutedHubHandlerOptions): HubHan
+       );
+     }
+     await registry.markActive(workspaceId);
++    const mirror = (await inner.handle(agentId, 'create_workspace', {
++      name: String(args.name ?? ''),
++      description: String(args.description ?? ''),
++      sessionId: `celld:${workspaceId}`,
++    })) as { workspaceId: string };
++    mirrors.set(workspaceId, mirror.workspaceId);
+ 
+     emitCellEvents(workspaceId, command.commandId, result.events);
+     return {

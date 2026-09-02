@@ -1,0 +1,426 @@
+diff --git a/src/celld/__tests__/routed-handler-global-reads.test.ts b/src/celld/__tests__/routed-handler-global-reads.test.ts
+new file mode 100644
+index 0000000..e4e35d8
+--- /dev/null
++++ b/src/celld/__tests__/routed-handler-global-reads.test.ts
+@@ -0,0 +1,233 @@
++/**
++ * whoami / list_workspaces across backends (RFC 0001).
++ *
++ * Both operations are global — they carry no workspaceId, so routing cannot
++ * pick a cell — yet a member of a celld workspace must see it from whoami
++ * and list_workspaces exactly as workspace_status and the HTTP read model
++ * already report it. The filesystem half still comes from the inner handler
++ * unchanged; the celld half is merged from active routes + cell snapshots.
++ */
++
++import { describe, expect, it } from 'vitest';
++import type { HubHandler } from '../../hub/hub-handler.js';
++import type { BackendRegistry, WorkspaceRoute } from '../backend-registry.js';
++import type { CellSnapshot, CellTransport } from '../client.js';
++import type { CellWorkspaceState } from '../domain/state.js';
++import { createRoutedHubHandler } from '../routed-handler.js';
++
++function registryOf(routes: WorkspaceRoute[]): BackendRegistry {
++  const byId = new Map(routes.map(route => [route.workspaceId, route]));
++  return {
++    get: async id => byId.get(id),
++    list: async () => [...byId.values()],
++    findByCommandId: async commandId => [...byId.values()].find(route => route.commandId === commandId),
++    findOrBeginProvisioning: async () => {
++      throw new Error('not used');
++    },
++    markActive: async () => {
++      throw new Error('not used');
++    },
++  };
++}
++
++function route(workspaceId: string, status: WorkspaceRoute['status'] = 'active'): WorkspaceRoute {
++  return { workspaceId, backend: 'celld', status, commandId: `create-${workspaceId}`, createdAt: '2026-08-07T00:00:00.000Z' };
++}
++
++function cellState(workspaceId: string, members: string[], problemCount = 0): CellWorkspaceState {
++  const state: CellWorkspaceState = {
++    schemaVersion: 'workspace-state-v1',
++    workspace: {
++      id: workspaceId,
++      name: `name-${workspaceId}`,
++      description: '',
++      createdBy: members[0] ?? 'nobody',
++      createdAt: '2026-08-07T00:00:00.000Z',
++      updatedAt: '2026-08-07T00:00:00.000Z',
++    },
++    members: {},
++    problems: {},
++    channels: {},
++    intents: {},
++    impacts: {},
++    changes: {},
++  };
++  for (const [index, agentId] of members.entries()) {
++    state.members[agentId] = { agentId, role: index === 0 ? 'coordinator' : 'contributor', joinedAt: '2026-08-07T00:00:00.000Z' };
++  }
++  for (let i = 0; i < problemCount; i++) {
++    state.problems[`p${i}`] = {
++      id: `p${i}`,
++      workspaceId,
++      title: 't',
++      description: 'd',
++      createdBy: members[0] ?? 'nobody',
++      status: 'open',
++      branchFromThought: 0,
++      createdAt: '2026-08-07T00:00:00.000Z',
++      updatedAt: '2026-08-07T00:00:00.000Z',
++    };
++  }
++  return state;
++}
++
++/** Snapshot-only transport: `snapshots` maps workspaceId → state, null state, or a thrown error. */
++function snapshotTransport(
++  snapshots: Record<string, CellWorkspaceState | null | Error>,
++): CellTransport & { snapshotCalls: string[] } {
++  const snapshotCalls: string[] = [];
++  return {
++    snapshotCalls,
++    async command() {
++      throw new Error('not used');
++    },
++    async query() {
++      throw new Error('not used');
++    },
++    async snapshot(workspaceId): Promise<CellSnapshot> {
++      snapshotCalls.push(workspaceId);
++      const entry = snapshots[workspaceId];
++      if (entry instanceof Error) throw entry;
++      return { workspaceId, revision: entry === null ? 0 : 3, maxSequence: entry === null ? 0 : 3, state: entry ?? null };
++    },
++    async events() {
++      return { events: [], count: 0 };
++    },
++    async health() {
++      return true;
++    },
++  };
++}
++
++function innerReturning(perOperation: Record<string, unknown>): HubHandler & { calls: string[] } {
++  const calls: string[] = [];
++  return {
++    calls,
++    async handle(_agentId, operation) {
++      calls.push(operation);
++      if (operation in perOperation) return perOperation[operation];
++      throw new Error(`unexpected inner operation ${operation}`);
++    },
++  };
++}
++
++const FS_WHOAMI = { agentId: 'agent-1', name: 'One', role: 'contributor', workspaces: ['ws-fs'], profile: 'REVIEWER' };
++const FS_LIST = { workspaces: [{ id: 'ws-fs', name: 'fs', agentCount: 1, problemCount: 2 }] };
++
++describe('whoami across backends', () => {
++  it('includes every active celld workspace the agent is a member of, after the filesystem ones', async () => {
++    const inner = innerReturning({ whoami: FS_WHOAMI });
++    const routed = createRoutedHubHandler({
++      inner,
++      registry: registryOf([route('ws-a'), route('ws-b'), route('ws-c')]),
++      transport: snapshotTransport({
++        'ws-a': cellState('ws-a', ['agent-1', 'agent-2']),
++        'ws-b': cellState('ws-b', ['agent-2']),
++        'ws-c': cellState('ws-c', ['agent-9', 'agent-1']),
++      }),
++    });
++    const result = (await routed.handle('agent-1', 'whoami', {})) as typeof FS_WHOAMI;
++    expect(inner.calls).toEqual(['whoami']);
++    expect(result.workspaces).toEqual(['ws-fs', 'ws-a', 'ws-c']);
++    // Everything else the inner handler said is preserved verbatim.
++    expect(result).toMatchObject({ agentId: 'agent-1', name: 'One', role: 'contributor', profile: 'REVIEWER' });
++  });
++
++  it('reports a celld-only member (filesystem says workspaces: [])', async () => {
++    const routed = createRoutedHubHandler({
++      inner: innerReturning({ whoami: { ...FS_WHOAMI, workspaces: [] } }),
++      registry: registryOf([route('ws-a')]),
++      transport: snapshotTransport({ 'ws-a': cellState('ws-a', ['agent-1']) }),
++    });
++    const result = (await routed.handle('agent-1', 'whoami', {})) as { workspaces: string[] };
++    expect(result.workspaces).toEqual(['ws-a']);
++  });
++
++  it('skips provisioning routes, uninitialized cells, unreachable cells, and non-memberships', async () => {
++    const transport = snapshotTransport({
++      'ws-active': cellState('ws-active', ['agent-1']),
++      'ws-empty': null,
++      'ws-down': new Error('cell unreachable'),
++      'ws-other': cellState('ws-other', ['agent-2']),
++    });
++    const routed = createRoutedHubHandler({
++      inner: innerReturning({ whoami: { ...FS_WHOAMI, workspaces: [] } }),
++      registry: registryOf([
++        route('ws-active'),
++        route('ws-provisioning', 'provisioning'),
++        route('ws-empty'),
++        route('ws-down'),
++        route('ws-other'),
++      ]),
++      transport,
++    });
++    const result = (await routed.handle('agent-1', 'whoami', {})) as { workspaces: string[] };
++    expect(result.workspaces).toEqual(['ws-active']);
++    expect(transport.snapshotCalls).not.toContain('ws-provisioning');
++  });
++
++  it('returns the inner result object untouched when no route is active', async () => {
++    const routed = createRoutedHubHandler({
++      inner: innerReturning({ whoami: FS_WHOAMI }),
++      registry: registryOf([route('ws-provisioning', 'provisioning')]),
++      transport: snapshotTransport({}),
++    });
++    const result = await routed.handle('agent-1', 'whoami', {});
++    expect(result).toBe(FS_WHOAMI);
++  });
++
++  it('propagates inner errors (unknown agent) without consulting cells', async () => {
++    const transport = snapshotTransport({ 'ws-a': cellState('ws-a', ['agent-1']) });
++    const routed = createRoutedHubHandler({
++      inner: {
++        async handle() {
++          throw new Error("Unknown agent 'agent-1'");
++        },
++      },
++      registry: registryOf([route('ws-a')]),
++      transport,
++    });
++    await expect(routed.handle('agent-1', 'whoami', {})).rejects.toThrow("Unknown agent 'agent-1'");
++    expect(transport.snapshotCalls).toEqual([]);
++  });
++});
++
++describe('list_workspaces across backends', () => {
++  it('appends every active celld workspace with the same summary shape plus backend', async () => {
++    const inner = innerReturning({ list_workspaces: FS_LIST });
++    const routed = createRoutedHubHandler({
++      inner,
++      registry: registryOf([route('ws-a'), route('ws-b')]),
++      transport: snapshotTransport({
++        'ws-a': cellState('ws-a', ['agent-1', 'agent-2'], 3),
++        'ws-b': cellState('ws-b', ['agent-2']),
++      }),
++    });
++    const result = (await routed.handle(null, 'list_workspaces', {})) as { workspaces: unknown[] };
++    expect(inner.calls).toEqual(['list_workspaces']);
++    expect(result.workspaces).toEqual([
++      { id: 'ws-fs', name: 'fs', agentCount: 1, problemCount: 2 },
++      { id: 'ws-a', name: 'name-ws-a', agentCount: 2, problemCount: 3, backend: 'celld' },
++      { id: 'ws-b', name: 'name-ws-b', agentCount: 1, problemCount: 0, backend: 'celld' },
++    ]);
++  });
++
++  it('marks unreachable cells like the HTTP read model and skips provisioning / uninitialized ones', async () => {
++    const routed = createRoutedHubHandler({
++      inner: innerReturning({ list_workspaces: { workspaces: [] } }),
++      registry: registryOf([route('ws-down'), route('ws-provisioning', 'provisioning'), route('ws-empty')]),
++      transport: snapshotTransport({ 'ws-down': new Error('cell unreachable'), 'ws-empty': null }),
++    });
++    const result = (await routed.handle(null, 'list_workspaces', {})) as { workspaces: unknown[] };
++    expect(result.workspaces).toEqual([{ id: 'ws-down', backend: 'celld', unreachable: true }]);
++  });
++
++  it('returns the inner result object untouched when no route is active', async () => {
++    const routed = createRoutedHubHandler({
++      inner: innerReturning({ list_workspaces: FS_LIST }),
++      registry: registryOf([]),
++      transport: snapshotTransport({}),
++    });
++    expect(await routed.handle(null, 'list_workspaces', {})).toBe(FS_LIST);
++  });
++});
+diff --git a/src/celld/cell-listing.ts b/src/celld/cell-listing.ts
+new file mode 100644
+index 0000000..301f5ba
+--- /dev/null
++++ b/src/celld/cell-listing.ts
+@@ -0,0 +1,39 @@
++/**
++ * Active celld workspace enumeration (RFC 0001).
++ *
++ * Shared by the HTTP read model and the routed hub handler so that every
++ * "which workspaces exist / which am I in" surface sees the same set: every
++ * ACTIVE route in the registry, with state read from the cell (the registry
++ * is routing authority only; workspace state authority is the cell). An
++ * unreachable cell is reported as such rather than failing the whole read.
++ */
++
++import type { BackendRegistry, WorkspaceRoute } from './backend-registry.js';
++import type { CellTransport } from './client.js';
++import type { CellWorkspaceState } from './domain/state.js';
++
++export type ActiveCell =
++  | { route: WorkspaceRoute; state: CellWorkspaceState; unreachable: false }
++  | { route: WorkspaceRoute; state: null; unreachable: true };
++
++/**
++ * Snapshot every active route. Routes whose cell answers with a null state
++ * (not yet initialized) are omitted; routes whose cell cannot be reached are
++ * returned with `unreachable: true` so callers can surface the row without
++ * claiming to know its contents.
++ */
++export async function listActiveCells(registry: BackendRegistry, transport: CellTransport): Promise<ActiveCell[]> {
++  const routes = (await registry.list()).filter(route => route.status === 'active');
++  const cells: ActiveCell[] = [];
++  for (const route of routes) {
++    try {
++      const snapshot = await transport.snapshot(route.workspaceId);
++      const state = snapshot.state as CellWorkspaceState | null;
++      if (state === null) continue;
++      cells.push({ route, state, unreachable: false });
++    } catch {
++      cells.push({ route, state: null, unreachable: true });
++    }
++  }
++  return cells;
++}
+diff --git a/src/celld/read-model.ts b/src/celld/read-model.ts
+index 4b11bb8..55e4efd 100644
+--- a/src/celld/read-model.ts
++++ b/src/celld/read-model.ts
+@@ -12,6 +12,7 @@ import type { HubHandler } from '../hub/hub-handler.js';
+ import type { AgentIdentity, Channel, HubStorage, Workspace } from '../hub/hub-types.js';
+ import type { BackendRegistry } from './backend-registry.js';
+ import type { CellTransport } from './client.js';
++import { listActiveCells } from './cell-listing.js';
+ import type { CellWorkspaceState } from './domain/state.js';
+ 
+ /** A workspace member joined against the global agent registry. */
+@@ -73,37 +74,32 @@ export function createHubReadModel(options: HubReadModelOptions): HubReadModel {
+ 
+   async function celldWorkspaceEntries(): Promise<unknown[]> {
+     if (registry === undefined || transport === undefined) return [];
+-    const routes = (await registry.list()).filter(route => route.status === 'active');
+-    const entries: unknown[] = [];
+-    for (const route of routes) {
+-      try {
+-        const snapshot = await transport.snapshot(route.workspaceId);
+-        const state = snapshot.state as CellWorkspaceState | null;
+-        if (state === null) continue;
+-        entries.push({
+-          id: state.workspace.id,
+-          name: state.workspace.name,
+-          description: state.workspace.description,
+-          createdBy: state.workspace.createdBy,
+-          createdAt: state.workspace.createdAt,
+-          updatedAt: state.workspace.updatedAt,
+-          mainSessionId: `celld:${state.workspace.id}`,
+-          agents: Object.values(state.members).map(member => ({
+-            agentId: member.agentId,
+-            role: member.role,
+-            joinedAt: member.joinedAt,
+-            status: 'online',
+-            lastSeenAt: member.joinedAt,
+-          })),
+-          backend: 'celld',
+-        });
+-      } catch {
+-        // An unreachable cell hides that workspace from the listing rather
+-        // than failing the whole read; the registry row still proves routing.
+-        entries.push({ id: route.workspaceId, backend: 'celld', unreachable: true });
++    return (await listActiveCells(registry, transport)).map(cell => {
++      if (cell.unreachable) {
++        // An unreachable cell hides that workspace's contents from the
++        // listing rather than failing the whole read; the registry row still
++        // proves routing.
++        return { id: cell.route.workspaceId, backend: 'celld', unreachable: true };
+       }
+-    }
+-    return entries;
++      const { state } = cell;
++      return {
++        id: state.workspace.id,
++        name: state.workspace.name,
++        description: state.workspace.description,
++        createdBy: state.workspace.createdBy,
++        createdAt: state.workspace.createdAt,
++        updatedAt: state.workspace.updatedAt,
++        mainSessionId: `celld:${state.workspace.id}`,
++        agents: Object.values(state.members).map(member => ({
++          agentId: member.agentId,
++          role: member.role,
++          joinedAt: member.joinedAt,
++          status: 'online',
++          lastSeenAt: member.joinedAt,
++        })),
++        backend: 'celld',
++      };
++    });
+   }
+ 
+   return {
+diff --git a/src/celld/routed-handler.ts b/src/celld/routed-handler.ts
+index 7e3b3b4..7540295 100644
+--- a/src/celld/routed-handler.ts
++++ b/src/celld/routed-handler.ts
+@@ -28,6 +28,7 @@ import {
+ } from './contracts.js';
+ import { CelldError, rejection } from './errors.js';
+ import type { BackendRegistry } from './backend-registry.js';
++import { listActiveCells } from './cell-listing.js';
+ import type { CellTransport } from './client.js';
+ 
+ export interface RoutedHubHandlerOptions {
+@@ -235,9 +236,54 @@ export function createRoutedHubHandler(options: RoutedHubHandlerOptions): HubHan
+     };
+   }
+ 
++  /**
++   * whoami / list_workspaces are global (no workspaceId) and the inner hub only
++   * knows filesystem storage, so celld memberships and workspaces are merged
++   * here from the same active-route + snapshot set the HTTP read model uses.
++   * With no active routes the inner result is returned untouched.
++   */
++  async function withCelldMemberships(agentId: string, result: unknown): Promise<unknown> {
++    const memberOf = (await listActiveCells(registry, transport))
++      // An unreachable cell cannot prove membership either way; it is omitted
++      // rather than guessed. list_workspaces still shows the row as unreachable.
++      .filter(cell => !cell.unreachable && cell.state.members[agentId] !== undefined)
++      .map(cell => cell.route.workspaceId);
++    if (memberOf.length === 0) return result;
++    const base = (typeof result === 'object' && result !== null ? result : {}) as { workspaces?: unknown };
++    const existing = Array.isArray(base.workspaces) ? (base.workspaces as unknown[]) : [];
++    return { ...base, workspaces: [...existing, ...memberOf.filter(id => !existing.includes(id))] };
++  }
++
++  async function withCelldWorkspaces(result: unknown): Promise<unknown> {
++    const cells = await listActiveCells(registry, transport);
++    if (cells.length === 0) return result;
++    const entries = cells.map(cell =>
++      cell.unreachable
++        ? { id: cell.route.workspaceId, backend: 'celld', unreachable: true }
++        : {
++            id: cell.route.workspaceId,
++            name: cell.state.workspace.name,
++            agentCount: Object.keys(cell.state.members).length,
++            problemCount: Object.keys(cell.state.problems).length,
++            backend: 'celld',
++          },
++    );
++    const base = (typeof result === 'object' && result !== null ? result : {}) as { workspaces?: unknown };
++    const existing = Array.isArray(base.workspaces) ? (base.workspaces as unknown[]) : [];
++    return { ...base, workspaces: [...existing, ...entries] };
++  }
++
+   return {
+     async handle(agentId, operation, args, requestPrincipal) {
+       const record = (args ?? {}) as Record<string, unknown>;
++      if (operation === 'whoami' || operation === 'list_workspaces') {
++        // Inner first: it owns agent resolution and the filesystem half, and
++        // its errors (unknown agent, missing agentId) must surface unchanged.
++        const result = await inner.handle(agentId, operation, args, requestPrincipal);
++        if (operation === 'list_workspaces') return withCelldWorkspaces(result);
++        return agentId === null ? result : withCelldMemberships(agentId, result);
++      }
++
+ 
+       if (operation === 'create_workspace' && record.backend === 'celld') {
+         if (agentId === null) throw new Error('create_workspace requires a resolved agentId');
