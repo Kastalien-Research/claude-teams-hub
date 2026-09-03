@@ -1,0 +1,1055 @@
+{
+  "exportedAt": "2026-09-02T23:53:41Z",
+  "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+  "teamRunId": "hub18-i2-2026-09-02",
+  "note": "Events from the instance-2 problem creation (sequence 64) onward; the full instance-1 log through sequence 63 is in ../ledger.json",
+  "revision": 91,
+  "events": [
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:64",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 64,
+      "aggregateRevision": 57,
+      "type": "problem_created",
+      "commandId": "create-problem-hub-issue-18-instance-2",
+      "actor": {
+        "agentId": "24e801d8-41ca-4d3d-8d5a-8a4bbcf8f66a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:21:44.583Z",
+      "data": {
+        "problem": {
+          "id": "prob:create-problem-hub-issue-18-instance-2",
+          "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+          "title": "Team run: hub issue #18 under the Task E2E workflow, instance 2 (hardened contract)",
+          "description": "T defined in mechanize/hub-issue-18-task-instance-2.md. Lineage: prob:create-problem-hub-issue-18-instance-1 (2/2 PASS, lock 9e829501, never relaxed); gaps found after verdict: H2 wording, latency (Codex on PR #19), malformed-200 isolation (Codex on PR #19), evaluator portability (Codex on PR #20). S0 unchanged = claude-teams-hub@c182dce. New holds H6 (bounded latency, in-flight count) and H7 (malformed response isolation); H2 pinned. Witnesses S-a..S-j including the instance-1 PASS diffs as S-g/S-h. Reference = PR #19 branch at d9c48e9. Roles: Task Manager 24e801d8, Verifier 678bd926, Executor 0254ce21. Contracts contract://hub18/i2/prompt, contract://hub18/i2/lock. Protocol: STAGE/READY/LOCKED/RUN COMPLETE/VERDICT/CLASSIFICATION as instance 1; plan in mechanize/hub18/RUN-PLAN-i2.md.",
+          "createdBy": "24e801d8-41ca-4d3d-8d5a-8a4bbcf8f66a",
+          "status": "open",
+          "branchFromThought": 0,
+          "createdAt": "2026-09-02T23:21:44.583Z",
+          "updatedAt": "2026-09-02T23:21:44.583Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:65",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 65,
+      "aggregateRevision": 58,
+      "type": "message_posted",
+      "commandId": "v2-stage-v1",
+      "actor": {
+        "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:26:15.181Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:v2-stage-v1",
+          "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+          "content": "STAGE V1 PASS pnpm test on S0 (verifier-s0 @ c182dce): 65 files passed / 726 tests passed, exit 0, 2026-09-02T23:25:45Z..23:25:48Z",
+          "timestamp": "2026-09-02T23:26:15.181Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:66",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 66,
+      "aggregateRevision": 59,
+      "type": "work_intent_declared",
+      "commandId": "v2-intent",
+      "actor": {
+        "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:26:24.948Z",
+      "data": {
+        "intent": {
+          "intentId": "int:678bd926-6414-45e7-a3e9-a86919dd3e4a:prob:create-problem-hub-issue-18-instance-2",
+          "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+          "problemId": "prob:create-problem-hub-issue-18-instance-2",
+          "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+          "teamRunId": "hub18-i2-2026-09-02",
+          "readScopes": [
+            "mechanize/hub18/runs-i2"
+          ],
+          "writeScopes": [
+            "mechanize/hub18/evaluator-i2"
+          ],
+          "contractRefs": [
+            "contract://hub18/i2/prompt",
+            "contract://hub18/i2/lock"
+          ],
+          "assumptionIds": [],
+          "leaseUntil": "2026-09-03T02:26:24.945Z",
+          "generation": 1,
+          "declaredAt": "2026-09-02T23:26:24.948Z",
+          "updatedAt": "2026-09-02T23:26:24.948Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:67",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 67,
+      "aggregateRevision": 60,
+      "type": "message_posted",
+      "commandId": "x2-e1-1788391586894",
+      "actor": {
+        "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:26:26.895Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:x2-e1-1788391586894",
+          "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+          "content": "STAGE E1 PASS executor-s0 clean at c182dce (detached worktree, node_modules present, only ignored dist/); `pnpm test` exit 0: Test Files 65 passed (65), Tests 726 passed (726), vitest duration 1.27s, run 2026-09-02T23:25:52Z..23:25:55Z. PROMPT.md written byte-identical at mechanize/hub18/runs-i2/claude-run-1/PROMPT.md and runs-i2/codex-run-1/PROMPT.md (19 lines, sha256 64691be17dff444b69abfa5937618d9a42aac3540286d8cee2c5d1b6ad4d3479): instance-1 G block quote verbatim (diff-checked against hub-issue-18-task.md) + instance-2 paragraph 'A cell that cannot be reached...' verbatim as a block quote (diff-checked against hub-issue-18-task-instance-2.md) + C verbatim + affordance note verbatim (both byte-equal to the instance-1 PROMPT.md lines), nothing else. Declaring intent next, then READY.",
+          "timestamp": "2026-09-02T23:26:26.895Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:68",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 68,
+      "aggregateRevision": 61,
+      "type": "work_intent_declared",
+      "commandId": "x2-intent-1788391594125",
+      "actor": {
+        "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:26:34.126Z",
+      "data": {
+        "intent": {
+          "intentId": "int:0254ce21-3367-457f-93fd-09160afd60f1:prob:create-problem-hub-issue-18-instance-2",
+          "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+          "problemId": "prob:create-problem-hub-issue-18-instance-2",
+          "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+          "teamRunId": "hub18-i2-2026-09-02",
+          "readScopes": [
+            "mechanize/hub18/evaluator-i2/LOCK.sha256"
+          ],
+          "writeScopes": [
+            "mechanize/hub18/runs-i2",
+            "mechanize/hub18/executor-s0"
+          ],
+          "contractRefs": [
+            "contract://hub18/i2/prompt",
+            "contract://hub18/i2/lock"
+          ],
+          "assumptionIds": [],
+          "leaseUntil": "2026-09-03T02:26:34.125Z",
+          "generation": 1,
+          "declaredAt": "2026-09-02T23:26:34.126Z",
+          "updatedAt": "2026-09-02T23:26:34.126Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:69",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 69,
+      "aggregateRevision": 62,
+      "type": "message_posted",
+      "commandId": "x2-ready-1788391598988",
+      "actor": {
+        "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:26:38.991Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:x2-ready-1788391598988",
+          "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+          "content": "READY executor 0254ce21-3367-457f-93fd-09160afd60f1",
+          "timestamp": "2026-09-02T23:26:38.991Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:70",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 70,
+      "aggregateRevision": 63,
+      "type": "message_posted",
+      "commandId": "x2-e2-1788391631843",
+      "actor": {
+        "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:27:11.845Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:x2-e2-1788391631843",
+          "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+          "content": "STAGE E2 PASS. Run scripts copied from the instance-1 templates (only the header comment differs, diff-verified): mechanize/hub18/runs-i2/claude-run-1/run.sh and runs-i2/codex-run-1/run.sh, both cd into executor-s0 and read their own PROMPT.md. Claude command: perl -e 'alarm 2700; exec @ARGV' -- claude -p \"$PROMPT\" --model claude-fable-5-1 --output-format stream-json --verbose --setting-sources project --strict-mcp-config --mcp-config '{\"mcpServers\":{}}' --disallowedTools \"WebFetch,WebSearch\" --dangerously-skip-permissions < /dev/null > runs-i2/claude-run-1/transcript.jsonl 2> runs-i2/claude-run-1/stderr.log. Codex command: CODEX_HOME=/Users/b.c.nims/dev/employment-ops-home/mechanize/invariant-task/.codex-home perl -e 'alarm 2700; exec @ARGV' -- codex exec --skip-git-repo-check --sandbox workspace-write --json -o runs-i2/codex-run-1/last-message.md \"$PROMPT\" < /dev/null > runs-i2/codex-run-1/transcript.jsonl 2> runs-i2/codex-run-1/stderr.log. Dry-run of the claude command (same flags, --model claude-fable-5-1, prompt 'Reply with exactly OK and stop.', executed inside executor-s0, 2026-09-02T23:26:57Z..23:26:59Z): exit 0, result 'OK', num_turns 1, is_error false, init model claude-fable-5-1, mcp_servers [], no WebFetch/WebSearch in the tool list, modelUsage claude-fable-5-1 (+ claude-haiku-4-5 helper), stderr empty; saved as runs-i2/claude-run-1/dryrun.jsonl. Versions: claude 2.1.259, node v24.15.0, codex-cli 0.144.6. executor-s0 clean at c182dce after the dry-run (git status: 0 entries). Idle until the LOCKED impact.",
+          "timestamp": "2026-09-02T23:27:11.845Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:71",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 71,
+      "aggregateRevision": 64,
+      "type": "message_posted",
+      "commandId": "v2-ready",
+      "actor": {
+        "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:29:24.111Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:v2-ready",
+          "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+          "content": "READY verifier 678bd926-6414-45e7-a3e9-a86919dd3e4a (intent int:678bd926-...:prob:create-problem-hub-issue-18-instance-2 declared, lease to 2026-09-03T02:26:24Z)",
+          "timestamp": "2026-09-02T23:29:24.111Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:72",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 72,
+      "aggregateRevision": 65,
+      "type": "message_posted",
+      "commandId": "tm2-t0",
+      "actor": {
+        "agentId": "24e801d8-41ca-4d3d-8d5a-8a4bbcf8f66a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:29:54.111Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:tm2-t0",
+          "agentId": "24e801d8-41ca-4d3d-8d5a-8a4bbcf8f66a",
+          "content": "T0 2026-09-02T23:29:54.108Z. LOCK deadline 2026-09-03T00:29:54.108Z (no LOCKED by then => ABORT lock-deadline). HARD FREEZE 2026-09-03T00:59:54.108Z (whatever exists is recorded and shipped). H6 stop rule: two attempts or 20 min, then FINDING UNQUALIFIED H6 and continue without it.",
+          "timestamp": "2026-09-02T23:29:54.111Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:73",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 73,
+      "aggregateRevision": 66,
+      "type": "message_posted",
+      "commandId": "v2-stage-v2",
+      "actor": {
+        "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:30:15.636Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:v2-stage-v2",
+          "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+          "content": "STAGE V2 PASS F1..F3 (instance-1 files, unchanged) on S0 in verifier-s0: 3 files failed, 3 tests failed / 1 passed (the F1 non-member guard passes on S0 by design), 2026-09-02T23:27:24Z..23:27:25Z",
+          "timestamp": "2026-09-02T23:30:15.636Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:74",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 74,
+      "aggregateRevision": 67,
+      "type": "message_posted",
+      "commandId": "v2-finding-h7-s0",
+      "actor": {
+        "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:33:24.540Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:v2-finding-h7-s0",
+          "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+          "content": "FINDING H7 http-listing not-a-hold-on-S0 for body \"state missing workspace.id\": at S0, src/celld/read-model.ts casts snapshot.state unchecked and pushes { id: undefined, name, ..., backend: celld } for that body (no throw, so its per-route catch never fires); the other three H7 bodies ({}, [], missing members) throw inside the catch at S0 and yield the placeholder. H7 MCP-side (whoami/list_workspaces) holds on S0 for all 4 bodies (vacuously: S0 merges no celld rows). H7 is kept exactly as the contract states it (HTTP listing behaves the same way); on S0 it is 16/17 tests passed, the failing one being the HTTP missing-workspace.id case, which is therefore flip-shaped at S0, not a hold. Not tuning the predicate; Task Manager to classify (spec/S0). 2026-09-02T23:32:37Z",
+          "timestamp": "2026-09-02T23:33:24.540Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:75",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 75,
+      "aggregateRevision": 68,
+      "type": "message_posted",
+      "commandId": "tm2-ruling-h7-f4",
+      "actor": {
+        "agentId": "24e801d8-41ca-4d3d-8d5a-8a4bbcf8f66a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:33:56.725Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:tm2-ruling-h7-f4",
+          "agentId": "24e801d8-41ca-4d3d-8d5a-8a4bbcf8f66a",
+          "content": "RULING on FINDING H7 (spec, pre-lock): a predicate that fails on S0 is a flip, not a hold. Reclassify the HTTP-listing 'state missing workspace.id' case as F4 (must FAIL on S0, PASS after). H7 keeps the other 16 cases (all four bodies MCP-side; {}, [], missing-members HTTP-side) as a hold. G is unchanged (its new paragraph already requires this behaviour and says the HTTP listing behaves the same way). Lock manifest must record F4 as a flip. No predicate text changes, only its class. Verifier: acknowledge the contract-clarification impact and continue V3.",
+          "timestamp": "2026-09-02T23:33:56.725Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:76",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 76,
+      "aggregateRevision": 69,
+      "type": "work_change_recorded",
+      "commandId": "tm2-change-h7-f4",
+      "actor": {
+        "agentId": "24e801d8-41ca-4d3d-8d5a-8a4bbcf8f66a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:34:03.318Z",
+      "data": {
+        "change": {
+          "changeId": "chg:tm2-change-h7-f4",
+          "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+          "agentId": "24e801d8-41ca-4d3d-8d5a-8a4bbcf8f66a",
+          "kind": "contract-clarification",
+          "summary": "Pre-lock ruling: H7's HTTP-listing 'missing workspace.id' case is reclassified as flip F4 (fails on S0 by construction); H7 keeps the other 16 cases as a hold. G unchanged. See RULING message on prob:create-problem-hub-issue-18-instance-2.",
+          "scopes": [
+            "mechanize/hub18/evaluator-i2"
+          ],
+          "contractRefs": [
+            "contract://hub18/i2/prompt"
+          ],
+          "assumptionIds": [],
+          "severity": "blocking",
+          "recordedAt": "2026-09-02T23:34:03.318Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:77",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 77,
+      "aggregateRevision": 69,
+      "type": "impact_detected",
+      "commandId": "tm2-change-h7-f4",
+      "actor": {
+        "agentId": "24e801d8-41ca-4d3d-8d5a-8a4bbcf8f66a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:34:03.318Z",
+      "data": {
+        "impact": {
+          "impactId": "imp:chg:tm2-change-h7-f4:0254ce21-3367-457f-93fd-09160afd60f1:prob:create-problem-hub-issue-18-instance-2:1",
+          "changeId": "chg:tm2-change-h7-f4",
+          "targetAgentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+          "targetProblemId": "prob:create-problem-hub-issue-18-instance-2",
+          "targetIntentGeneration": 1,
+          "severity": "blocking",
+          "status": "pending",
+          "matchingReasons": [
+            {
+              "kind": "contractRef",
+              "source": "contract://hub18/i2/prompt",
+              "target": "contract://hub18/i2/prompt"
+            },
+            {
+              "kind": "scope",
+              "source": "mechanize/hub18/evaluator-i2",
+              "target": "mechanize/hub18/evaluator-i2/LOCK.sha256"
+            }
+          ],
+          "detectedAt": "2026-09-02T23:34:03.318Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:78",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 78,
+      "aggregateRevision": 69,
+      "type": "impact_detected",
+      "commandId": "tm2-change-h7-f4",
+      "actor": {
+        "agentId": "24e801d8-41ca-4d3d-8d5a-8a4bbcf8f66a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:34:03.318Z",
+      "data": {
+        "impact": {
+          "impactId": "imp:chg:tm2-change-h7-f4:678bd926-6414-45e7-a3e9-a86919dd3e4a:prob:create-problem-hub-issue-18-instance-2:1",
+          "changeId": "chg:tm2-change-h7-f4",
+          "targetAgentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+          "targetProblemId": "prob:create-problem-hub-issue-18-instance-2",
+          "targetIntentGeneration": 1,
+          "severity": "blocking",
+          "status": "pending",
+          "matchingReasons": [
+            {
+              "kind": "contractRef",
+              "source": "contract://hub18/i2/prompt",
+              "target": "contract://hub18/i2/prompt"
+            },
+            {
+              "kind": "scope",
+              "source": "mechanize/hub18/evaluator-i2",
+              "target": "mechanize/hub18/evaluator-i2"
+            }
+          ],
+          "detectedAt": "2026-09-02T23:34:03.318Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:79",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 79,
+      "aggregateRevision": 70,
+      "type": "impact_acknowledged",
+      "commandId": "x2-ack-h7f4-1788392058882",
+      "actor": {
+        "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:34:18.884Z",
+      "data": {
+        "impactId": "imp:chg:tm2-change-h7-f4:0254ce21-3367-457f-93fd-09160afd60f1:prob:create-problem-hub-issue-18-instance-2:1",
+        "disposition": "accepted",
+        "acknowledgedAt": "2026-09-02T23:34:18.884Z"
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:80",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 80,
+      "aggregateRevision": 71,
+      "type": "message_posted",
+      "commandId": "x2-ack-note-1788392066865",
+      "actor": {
+        "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:34:26.866Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:x2-ack-note-1788392066865",
+          "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+          "content": "ACK impact chg:tm2-change-h7-f4 accepted at 2026-09-02T23:34:18Z. Ruling changes predicate class only (HTTP missing-workspace.id case -> F4); G text unchanged, so PROMPT.md in runs-i2/claude-run-1 and runs-i2/codex-run-1 is unchanged (sha256 64691be17dff444b69abfa5937618d9a42aac3540286d8cee2c5d1b6ad4d3479). Still idle until LOCKED.",
+          "timestamp": "2026-09-02T23:34:26.866Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:81",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 81,
+      "aggregateRevision": 72,
+      "type": "impact_acknowledged",
+      "commandId": "v2-ack-h7-f4",
+      "actor": {
+        "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:34:46.840Z",
+      "data": {
+        "impactId": "imp:chg:tm2-change-h7-f4:678bd926-6414-45e7-a3e9-a86919dd3e4a:prob:create-problem-hub-issue-18-instance-2:1",
+        "disposition": "accepted",
+        "acknowledgedAt": "2026-09-02T23:34:46.840Z",
+        "note": "HTTP-listing missing-workspace.id case moved verbatim into tests/hub18-f4-http-missing-workspace-id.test.ts (flip); H7 keeps the other 16 cases; grade.sh and lock manifest record F4 as a flip."
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:82",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 82,
+      "aggregateRevision": 73,
+      "type": "message_posted",
+      "commandId": "v2-stage-v3",
+      "actor": {
+        "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:36:11.175Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:v2-stage-v3",
+          "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+          "content": "STAGE V3 PASS holds on S0 via evaluator-i2/grade.sh (per-file vitest, bash 3.2 + coreutils): H2=PASS (3 tests: placeholder exact shape / whoami omits / all-dead), H3=PASS (1), H4=PASS (1), H6=PASS (3 tests, in-flight-count form, 5 consecutive runs 5/5 pass at 23:32:33Z..37Z), H7=PASS (11 tests: 4 bodies x MCP list+whoami = 8, plus HTTP listing for {}, [], missing-members = 3; the 12th HTTP case, missing workspace.id, is now F4 per ruling chg:tm2-change-h7-f4 and FAILS on S0 as a flip must). Correction to my FINDING count: H7 had 12 cases, not 16; 11 stay in H7, 1 is F4. Impact acknowledged 23:34:46Z. Full S0 row: F1=FAIL F2=FAIL F3=FAIL F4=FAIL H2..H7=PASS H1=PASS(726/726) H5=PASS(67 files), 2026-09-02T23:35:10Z..23:35:20Z",
+          "timestamp": "2026-09-02T23:36:11.175Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:83",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 83,
+      "aggregateRevision": 74,
+      "type": "message_posted",
+      "commandId": "v2-stage-v4",
+      "actor": {
+        "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:36:24.808Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:v2-stage-v4",
+          "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+          "content": "STAGE V4 PASS reference = i2/reference-pr19.patch (PR #19 d9c48e9 vs c182dce) applied on S0 in verifier-s0, graded by evaluator-i2/grade.sh: F1=PASS F2=PASS F3=PASS F4=PASS H2=PASS H3=PASS H4=PASS H6=PASS H7=PASS H1=PASS (738/738, 67 files) H5=PASS (67 locked files byte-identical) guard=ok, 2026-09-02T23:35:20Z..23:35:29Z. H6 on the reference: 5 consecutive runs 5/5 pass (3 tests each), 23:34:16Z..23:34:20Z. Reference qualified; copied to evaluator-i2/reference.patch.",
+          "timestamp": "2026-09-02T23:36:24.808Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:84",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 84,
+      "aggregateRevision": 75,
+      "type": "message_posted",
+      "commandId": "v2-stage-v5",
+      "actor": {
+        "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:39:22.809Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:v2-stage-v5",
+          "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+          "content": "STAGE V5 PASS witnesses S-a..S-j graded by evaluator-i2/grade.sh in verifier-s0, 2026-09-02T23:37:11Z..23:38:49Z (row = F1 F2 F3 F4 | H2 H3 H4 H6 H7 | H1 H5; P=PASS F=FAIL):\nS0 (none): F F F F | P P P P P | P(726) P\nreference (pr19): P P P P | P P P P P | P(738) P\nS-a hub imports celld (ref+): P P P P | P P P P P | F(2 failed: both src/hub guards) P -> H1\nS-b dual-write fs storage (ref+): P P F F | F F F P F | P P -> H4 (+H3, F3, H2, H7, F4 via mirror rows)\nS-c serial, throw on dead cell (ref+, rebased onto cell-listing.ts): P P P P | F P P F P | F(4) P -> H2 + H6\nS-d whoami via cell command (ref+, rebased): P P P P | P F P P P | F(3) P -> H3\nS-e weaken architecture test (ref+): P P P P | P P P P P | P(737) F -> H5 only\nS-f hub calls HTTP read model (S0+hub hunks only): F F F F | P P P P P | F(2) P -> H1 (+F1..F4)\nS-g claude-run-1 diff (S0+): P P P F | P P P F F | P(734) P -> H6 (3/3 tests) + H7 (15/11... see matrix) + F4. H6 deterministic: 5 consecutive runs 5/5 FAIL (3 failed each), 23:38:0xZ\nS-h codex-run-1 diff (S0+): P P P F | P P P F F | P(726) P -> H6 + H7 (both fail; H7 recorded as FAIL) + F4\nS-i timeout lowered, serial (ref+): P P P P | P P P F P | F(1: reference's own concurrency test) P -> H6 only (in-flight max 1)\nS-j catch-all empty list (ref+, no per-cell isolation): P P P F | F P P P F | F(4) P -> H2 + H7 + F4; NOT caught by F1..F3 (happy path never hits the catch-all)\nExpectations met: S-g fails H6 and H7; S-h fails H6 (and H7); S-i caught by H6 via in-flight count; S-j caught by H2/H7 (and F4), not by F1..F3. Matrix written to evaluator-i2/matrix.md; locking next.",
+          "timestamp": "2026-09-02T23:39:22.809Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:85",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 85,
+      "aggregateRevision": 76,
+      "type": "message_posted",
+      "commandId": "v2-locked",
+      "actor": {
+        "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:40:42.134Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:v2-locked",
+          "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+          "content": "LOCKED d6002fb8da335efd3920bab0057e625643445df4189cc40a2ac78029e0ab6ea9 (2026-09-02T23:40:26Z). Manifest: 30 lines = 29 files under evaluator-i2/ (paths relative to its parent: tests/ f1 f2 f3 f4 h2 h3 h4 h6 h7 + harness, witnesses/ S-a..S-j, reference.patch, TASK-instance-2.md byte copy of hub-issue-18-task-instance-2.md, locked-tests.sha256 67 files, matrix.md, grade.sh, run-tests.sh, check-locked-tests.sh, check-lock.sh, make-manifest.sh) + line \"S0 c182dce\"; excludes LOCK.sha256 and lock-manifest.txt. Flips: F1 F2 F3 F4 (F4 per ruling chg:tm2-change-h7-f4). Holds: H1 H2 H3 H4 H5 H6 H7; H6 included (deterministic: reference 5/5 pass, S-g 5/5 fail). Verify: evaluator-i2/check-lock.sh or `make-manifest.sh | shasum -a 256`. Recording BLOCKING change on contract://hub18/i2/lock next, then the PATH=/usr/bin:/bin portability run.",
+          "timestamp": "2026-09-02T23:40:42.134Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:86",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 86,
+      "aggregateRevision": 77,
+      "type": "work_change_recorded",
+      "commandId": "v2-change-lock",
+      "actor": {
+        "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:41:16.388Z",
+      "data": {
+        "change": {
+          "changeId": "chg:v2-change-lock",
+          "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+          "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+          "kind": "contract-change",
+          "summary": "LOCKED d6002fb8da335efd3920bab0057e625643445df4189cc40a2ac78029e0ab6ea9: evaluator-i2 lock published (flips F1..F4, holds H1..H7 incl. H6; S0 c182dce; reference PR #19). Solver runs may start; the Verifier grades each RUN COMPLETE against this lock.",
+          "scopes": [
+            "mechanize/hub18/evaluator-i2/LOCK.sha256"
+          ],
+          "contractRefs": [
+            "contract://hub18/i2/lock"
+          ],
+          "assumptionIds": [],
+          "severity": "blocking",
+          "recordedAt": "2026-09-02T23:41:16.388Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:87",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 87,
+      "aggregateRevision": 77,
+      "type": "impact_detected",
+      "commandId": "v2-change-lock",
+      "actor": {
+        "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:41:16.388Z",
+      "data": {
+        "impact": {
+          "impactId": "imp:chg:v2-change-lock:0254ce21-3367-457f-93fd-09160afd60f1:prob:create-problem-hub-issue-18-instance-2:1",
+          "changeId": "chg:v2-change-lock",
+          "targetAgentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+          "targetProblemId": "prob:create-problem-hub-issue-18-instance-2",
+          "targetIntentGeneration": 1,
+          "severity": "blocking",
+          "status": "pending",
+          "matchingReasons": [
+            {
+              "kind": "contractRef",
+              "source": "contract://hub18/i2/lock",
+              "target": "contract://hub18/i2/lock"
+            },
+            {
+              "kind": "scope",
+              "source": "mechanize/hub18/evaluator-i2/LOCK.sha256",
+              "target": "mechanize/hub18/evaluator-i2/LOCK.sha256"
+            }
+          ],
+          "detectedAt": "2026-09-02T23:41:16.388Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:88",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 88,
+      "aggregateRevision": 78,
+      "type": "impact_acknowledged",
+      "commandId": "x2-ack-lock-1788392487656",
+      "actor": {
+        "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:41:27.658Z",
+      "data": {
+        "impactId": "imp:chg:v2-change-lock:0254ce21-3367-457f-93fd-09160afd60f1:prob:create-problem-hub-issue-18-instance-2:1",
+        "disposition": "accepted",
+        "acknowledgedAt": "2026-09-02T23:41:27.658Z"
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:89",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 89,
+      "aggregateRevision": 79,
+      "type": "message_posted",
+      "commandId": "v2-stage-v6",
+      "actor": {
+        "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:41:28.357Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:v2-stage-v6",
+          "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+          "content": "STAGE V6 PASS lock d6002fb8... published 23:40:42Z; BLOCKING change chg:v2-change-lock recorded 23:41:16Z on contract://hub18/i2/lock (1 impact, to the Executor). PORTABILITY (grade.sh on reference.patch, 23:40:46Z..23:40:56Z): run A `PATH=/usr/bin:/bin ./grade.sh ../verifier-s0 portability-check reference.patch` -> script completes, exit 0, patch applied, tests copied and removed cleanly (0 hub18- files left), H5=PASS (shasum in /usr/bin), but every vitest predicate and H1 read FAIL because `pnpm: command not found` (grade.sh lines 58, 72): pnpm/node live in ~/.nvm/versions/node/v24.15.0/bin, not /usr/bin. Run B with exactly that directory appended (PATH=/usr/bin:/bin:<nvm bin>) -> F1..F4 PASS, H2..H7 PASS, H1 PASS (738/738), H5 PASS, guard=ok. Conclusion: the evaluator scripts use nothing outside bash 3.2 + coreutils + git besides the two affordances node and pnpm. Noted weakness, not fixed (lock already posted): a missing pnpm is reported as all-FAIL rather than as an error; a pre-flight `command -v pnpm` would need a relock -- Task Manager's call. Lock re-verified after both runs: LOCK OK. Idle until a RUN COMPLETE impact.",
+          "timestamp": "2026-09-02T23:41:28.357Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:90",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 90,
+      "aggregateRevision": 80,
+      "type": "message_posted",
+      "commandId": "x2-e3-start-1788392508586",
+      "actor": {
+        "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:41:48.588Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:x2-e3-start-1788392508586",
+          "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+          "content": "STAGE E3 RUNNING. LOCKED d6002fb8da335efd3920bab0057e625643445df4189cc40a2ac78029e0ab6ea9 impact imp:chg:v2-change-lock:...:1 acknowledged accepted at 2026-09-02T23:41:27Z. executor-s0 re-checked clean at c182dce (git status 0 entries, diff vs c182dce empty) immediately before launch. Frontier agent claude-fable-5-1 launched via runs-i2/claude-run-1/run.sh at 2026-09-02T23:41:37Z, 2700s wall-clock alarm; meta.txt written with start ISO, lock sha, prompt sha. Will post STAGE E3/E4 and RUN COMPLETE on exit, then reset and launch codex.",
+          "timestamp": "2026-09-02T23:41:48.588Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:91",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 91,
+      "aggregateRevision": 81,
+      "type": "message_posted",
+      "commandId": "x2-e4-claude-1788392710836",
+      "actor": {
+        "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:45:10.838Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:x2-e4-claude-1788392710836",
+          "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+          "content": "STAGE E3 PASS / STAGE E4 PASS (claude). RUN COMPLETE mechanize/hub18/runs-i2/claude-run-1 189s 486 lines. claude-fable-5-1 run 2026-09-02T23:41:37Z..23:44:46Z, exit 0, result subtype success, is_error false, num_turns 21, duration_ms 183431, transcript 114 lines, stderr empty, init mcp_servers [], modelUsage claude-fable-5-1 + haiku-4-5 helper. Diff captured with `git add -N . && git diff c182dce` -> runs-i2/claude-run-1/diff.patch (486 lines): M src/celld/read-model.ts, M src/celld/routed-handler.ts, new src/celld/__tests__/routed-handler-listing.test.ts. Guards: src/__tests__/architecture.test.ts untouched (0 diff lines); no existing test file modified (diff-filter=M over __tests__/ and *.test.* is empty); package.json and pnpm-lock.yaml unchanged (no dependency change); no network access possible (mcp [], web tools disallowed). meta.txt has start/end/exit/turns. Not graded here. Resetting executor-s0 to S0 and launching codex next.",
+          "timestamp": "2026-09-02T23:45:10.838Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:92",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 92,
+      "aggregateRevision": 82,
+      "type": "work_change_recorded",
+      "commandId": "x2-change-claude-run-1-1788392719984",
+      "actor": {
+        "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:45:19.986Z",
+      "data": {
+        "change": {
+          "changeId": "chg:x2-change-claude-run-1-1788392719984",
+          "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+          "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+          "kind": "run-complete",
+          "summary": "RUN COMPLETE mechanize/hub18/runs-i2/claude-run-1: claude-fable-5-1, 189s, 21 turns, exit 0, diff.patch 486 lines (2 src files modified, 1 new test file), guards clean",
+          "scopes": [
+            "mechanize/hub18/runs-i2/claude-run-1"
+          ],
+          "contractRefs": [
+            "contract://hub18/i2/prompt"
+          ],
+          "assumptionIds": [],
+          "severity": "advisory",
+          "recordedAt": "2026-09-02T23:45:19.986Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:93",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 93,
+      "aggregateRevision": 82,
+      "type": "impact_detected",
+      "commandId": "x2-change-claude-run-1-1788392719984",
+      "actor": {
+        "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:45:19.986Z",
+      "data": {
+        "impact": {
+          "impactId": "imp:chg:x2-change-claude-run-1-1788392719984:678bd926-6414-45e7-a3e9-a86919dd3e4a:prob:create-problem-hub-issue-18-instance-2:1",
+          "changeId": "chg:x2-change-claude-run-1-1788392719984",
+          "targetAgentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+          "targetProblemId": "prob:create-problem-hub-issue-18-instance-2",
+          "targetIntentGeneration": 1,
+          "severity": "advisory",
+          "status": "pending",
+          "matchingReasons": [
+            {
+              "kind": "contractRef",
+              "source": "contract://hub18/i2/prompt",
+              "target": "contract://hub18/i2/prompt"
+            },
+            {
+              "kind": "scope",
+              "source": "mechanize/hub18/runs-i2/claude-run-1",
+              "target": "mechanize/hub18/runs-i2"
+            }
+          ],
+          "detectedAt": "2026-09-02T23:45:19.986Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:94",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 94,
+      "aggregateRevision": 83,
+      "type": "impact_acknowledged",
+      "commandId": "v2-ack-claude-run-1",
+      "actor": {
+        "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:45:29.958Z",
+      "data": {
+        "impactId": "imp:chg:x2-change-claude-run-1-1788392719984:678bd926-6414-45e7-a3e9-a86919dd3e4a:prob:create-problem-hub-issue-18-instance-2:1",
+        "disposition": "accepted",
+        "acknowledgedAt": "2026-09-02T23:45:29.958Z",
+        "note": "Grading runs-i2/claude-run-1 against lock d6002fb8."
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:95",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 95,
+      "aggregateRevision": 84,
+      "type": "message_posted",
+      "commandId": "v2-verdict-claude-run-1",
+      "actor": {
+        "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:46:11.617Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:v2-verdict-claude-run-1",
+          "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+          "content": "VERDICT PASS claude-run-1 (no blocker). Lock rehash before and after grading: LOCK OK d6002fb8da335efd3920bab0057e625643445df4189cc40a2ac78029e0ab6ea9. Graded mechanize/hub18/runs-i2/claude-run-1/diff.patch (sha256 2e3e009c1a741067375375d15c8f760a6a9b207d32842948212e7d9b6cf54d25; touches src/celld/read-model.ts, src/celld/routed-handler.ts, new src/celld/__tests__/routed-handler-listing.test.ts) on verifier-s0 reset to c182dce via evaluator-i2/grade.sh, 2026-09-02T23:45:43Z..23:45:52Z: F1=PASS (2/2) F2=PASS (1/1) F3=PASS (1/1) F4=PASS (1/1) H2=PASS (3/3) H3=PASS (1/1) H4=PASS (1/1) H6=PASS (3/3) H7=PASS (11/11, 1 skipped = F4) H1=PASS (pnpm test 735/735) H5=PASS (67 locked files byte-identical) guard=ok (package.json / lockfiles unchanged). H6 5 consecutive runs 5/5 PASS. Copied tests removed cleanly. Outputs in mechanize/hub18/grading-i2/claude-run-1/. Idle until the next RUN COMPLETE.",
+          "timestamp": "2026-09-02T23:46:11.617Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:96",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 96,
+      "aggregateRevision": 85,
+      "type": "message_posted",
+      "commandId": "x2-e3-codex-start-1788392774561",
+      "actor": {
+        "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:46:14.563Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:x2-e3-codex-start-1788392774561",
+          "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+          "content": "STAGE E3 RUNNING (codex). Advisory change chg:x2-change-claude-run-1-1788392719984 recorded on scope mechanize/hub18/runs-i2/claude-run-1 at 23:45:19Z. executor-s0 reset to S0 (git reset && checkout -- . && clean -fd): git status 0 entries, HEAD c182dce, diff vs c182dce empty. codex exec (gpt-5.6-sol, reasoning high per CODEX_HOME config.toml, sandbox workspace-write, codex-cli 0.144.6) launched via runs-i2/codex-run-1/run.sh at 2026-09-02T23:45:59Z with the same PROMPT.md (sha256 64691be1...), 2700s alarm; meta.txt written. Will post RUN COMPLETE + advisory change on exit.",
+          "timestamp": "2026-09-02T23:46:14.563Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:97",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 97,
+      "aggregateRevision": 86,
+      "type": "message_posted",
+      "commandId": "x2-e4-codex-1788393109665",
+      "actor": {
+        "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:51:49.667Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:x2-e4-codex-1788393109665",
+          "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+          "content": "STAGE E3 PASS / STAGE E4 PASS (codex). RUN COMPLETE mechanize/hub18/runs-i2/codex-run-1 309s 242 lines. codex exec gpt-5.6-sol (reasoning high) launched 2026-09-02T23:46:07Z, ended 23:51:16Z, exit 0, 1 turn.completed, 16 command_execution items, 24 reasoning items, 2 file_change items, transcript 72 lines; usage input 1590430 (cached 1504640) / output 11988 (reasoning 5261). One item of type error is the codex skills-context-budget notice only. stderr.log 39 bytes (\"Reading additional input from stdin...\"). Solver last message states pnpm test reached 721 passing with five HTTP tests unable to bind a socket under the codex sandbox (EPERM on listen(0)); reported as the solver said it, not verified here. Diff captured with `git add -N . && git diff c182dce` -> runs-i2/codex-run-1/diff.patch (242 lines): M src/celld/read-model.ts, M src/celld/routed-handler.ts, new src/celld/workspace-state-reader.ts; no test files added. Guards: src/__tests__/architecture.test.ts untouched (0 diff lines); no existing test file modified; package.json and pnpm-lock.yaml unchanged; no network access. meta.txt has start/launch/end/exit/turns. Not graded here. Recording advisory change next, then idle.",
+          "timestamp": "2026-09-02T23:51:49.667Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:98",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 98,
+      "aggregateRevision": 87,
+      "type": "work_change_recorded",
+      "commandId": "x2-change-codex-run-1-1788393116875",
+      "actor": {
+        "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:51:56.877Z",
+      "data": {
+        "change": {
+          "changeId": "chg:x2-change-codex-run-1-1788393116875",
+          "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+          "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+          "kind": "run-complete",
+          "summary": "RUN COMPLETE mechanize/hub18/runs-i2/codex-run-1: gpt-5.6-sol, 309s, 1 turn / 16 commands, exit 0, diff.patch 242 lines (2 src files modified, 1 new src file, no tests), guards clean",
+          "scopes": [
+            "mechanize/hub18/runs-i2/codex-run-1"
+          ],
+          "contractRefs": [
+            "contract://hub18/i2/prompt"
+          ],
+          "assumptionIds": [],
+          "severity": "advisory",
+          "recordedAt": "2026-09-02T23:51:56.877Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:99",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 99,
+      "aggregateRevision": 87,
+      "type": "impact_detected",
+      "commandId": "x2-change-codex-run-1-1788393116875",
+      "actor": {
+        "agentId": "0254ce21-3367-457f-93fd-09160afd60f1",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:51:56.877Z",
+      "data": {
+        "impact": {
+          "impactId": "imp:chg:x2-change-codex-run-1-1788393116875:678bd926-6414-45e7-a3e9-a86919dd3e4a:prob:create-problem-hub-issue-18-instance-2:1",
+          "changeId": "chg:x2-change-codex-run-1-1788393116875",
+          "targetAgentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+          "targetProblemId": "prob:create-problem-hub-issue-18-instance-2",
+          "targetIntentGeneration": 1,
+          "severity": "advisory",
+          "status": "pending",
+          "matchingReasons": [
+            {
+              "kind": "contractRef",
+              "source": "contract://hub18/i2/prompt",
+              "target": "contract://hub18/i2/prompt"
+            },
+            {
+              "kind": "scope",
+              "source": "mechanize/hub18/runs-i2/codex-run-1",
+              "target": "mechanize/hub18/runs-i2"
+            }
+          ],
+          "detectedAt": "2026-09-02T23:51:56.877Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:100",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 100,
+      "aggregateRevision": 88,
+      "type": "impact_acknowledged",
+      "commandId": "v2-ack-codex-run-1",
+      "actor": {
+        "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:52:04.882Z",
+      "data": {
+        "impactId": "imp:chg:x2-change-codex-run-1-1788393116875:678bd926-6414-45e7-a3e9-a86919dd3e4a:prob:create-problem-hub-issue-18-instance-2:1",
+        "disposition": "accepted",
+        "acknowledgedAt": "2026-09-02T23:52:04.882Z",
+        "note": "Grading runs-i2/codex-run-1 against lock d6002fb8."
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:101",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 101,
+      "aggregateRevision": 89,
+      "type": "message_posted",
+      "commandId": "v2-verdict-codex-run-1",
+      "actor": {
+        "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:52:41.889Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:v2-verdict-codex-run-1",
+          "agentId": "678bd926-6414-45e7-a3e9-a86919dd3e4a",
+          "content": "VERDICT PASS codex-run-1 (no blocker). Lock rehash before and after grading: LOCK OK d6002fb8da335efd3920bab0057e625643445df4189cc40a2ac78029e0ab6ea9. Graded mechanize/hub18/runs-i2/codex-run-1/diff.patch (sha256 7e6f0c7cf4504c46192cdc47361017f6f33a1fb23f681fb9fdab3da2d0e79adb; touches src/celld/read-model.ts, src/celld/routed-handler.ts, new src/celld/workspace-state-reader.ts; no test files) on verifier-s0 reset to c182dce via evaluator-i2/grade.sh, 2026-09-02T23:52:15Z..23:52:25Z: F1=PASS (2/2) F2=PASS (1/1) F3=PASS (1/1) F4=PASS (1/1) H2=PASS (3/3) H3=PASS (1/1) H4=PASS (1/1) H6=PASS (3/3) H7=PASS (11/11, 1 skipped = F4) H1=PASS (pnpm test 726/726 outside the codex sandbox, so the five HTTP listen tests the solver could not bind do pass) H5=PASS (67 locked files byte-identical) guard=ok (package.json / lockfiles unchanged). H6 5 consecutive runs 5/5 PASS. Copied tests removed cleanly. Outputs in mechanize/hub18/grading-i2/codex-run-1/. Both instance-2 runs graded: 2/2 PASS under the hardened lock. Idle.",
+          "timestamp": "2026-09-02T23:52:41.889Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:102",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 102,
+      "aggregateRevision": 90,
+      "type": "message_posted",
+      "commandId": "tm2-classify",
+      "actor": {
+        "agentId": "24e801d8-41ca-4d3d-8d5a-8a4bbcf8f66a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:53:09.631Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "message": {
+          "id": "msg:tm2-classify",
+          "agentId": "24e801d8-41ca-4d3d-8d5a-8a4bbcf8f66a",
+          "content": "CLASSIFICATION instance 2: COMPLETE, 2/2 PASS (claude-fable-5-1 189s/21 turns, gpt-5.6-sol 309s) against lock d6002fb8, never relaxed. Receipt type PASS for both. Task Manager graded nothing.\nWhat the instance established: (1) H6 is a robust measurable hold: in-flight-count form, 5/5 deterministic on S0, reference, S-g (fails) and S-i (fails); no wall-clock. (2) Lineage works: both instance-1 PASS diffs, as witnesses S-g/S-h, fail H6, H7 and F4 under the strengthened contract; the timeout-lowering cheat S-i is rejected by the in-flight count; the catch-all S-j is rejected by H2/H7/F4 and, as predicted, not by F1..F3. (3) A pre-lock spec defect (H7's HTTP missing-workspace.id case is flip-shaped at S0) was found by the Verifier, ruled by the Task Manager (reclassified F4), and routed to both teammates as a blocking contract-clarification impact, acknowledged by both before the lock. (4) Evaluator is portable (grade.sh completes and cleans up under PATH=/usr/bin:/bin) and its manifest is layout-independent.\nVerdict reading: stating the requirement in the contract was sufficient for both models, as in the dispatcher task's instance 2. No FAIL was manufactured and none occurred on fresh runs; the discriminating evidence is the witness matrix, not the solver verdicts. Difficulty remains LOW for frontier models once the requirement is stated.\nTimeline: T0 23:29:54Z, LOCKED 23:40:26Z (+10.5 min; deadline was +60), claude VERDICT 23:45Z, codex VERDICT 23:52Z (+23 min; freeze was +90). Problem -> resolved.",
+          "timestamp": "2026-09-02T23:53:09.631Z"
+        }
+      }
+    },
+    {
+      "schemaVersion": "hub-event-v1",
+      "eventId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01:103",
+      "workspaceId": "ws-af2a669a-c311-4d98-8f53-f7d7de712c01",
+      "sequence": 103,
+      "aggregateRevision": 91,
+      "type": "problem_status_changed",
+      "commandId": "tm2-resolve",
+      "actor": {
+        "agentId": "24e801d8-41ca-4d3d-8d5a-8a4bbcf8f66a",
+        "teamRunId": "hub18-i2-2026-09-02"
+      },
+      "occurredAt": "2026-09-02T23:53:21.029Z",
+      "data": {
+        "problemId": "prob:create-problem-hub-issue-18-instance-2",
+        "updatedAt": "2026-09-02T23:53:21.029Z",
+        "status": "resolved",
+        "resolution": "Instance 2 complete: 2/2 PASS against lock d6002fb8; H6 measurable; instance-1 PASS diffs rejected as witnesses; pre-lock F4 ruling routed via blocking impact; evaluator portable."
+      }
+    }
+  ]
+}

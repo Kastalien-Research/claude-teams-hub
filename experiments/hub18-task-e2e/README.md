@@ -132,6 +132,73 @@ where the two instance-1 PASS diffs become witnesses S-g and S-h. That is the
 workflow's lineage mechanic: the lock is never relaxed; the next instance is
 stricter.
 
+## Instance 2: the strengthened contract, run by the same team
+
+`instance-2/` holds the second run: same S0 (`c182dce`), same three identities,
+same launch mechanics, contract from `TASK-instance-2.md`. Predefined stop rules
+(`instance-2/RUN-PLAN.md`): H6 gets two attempts or 20 minutes to be deterministic
+or is declared UNQUALIFIED; lock by T0+60 or abort; hard freeze at T0+90; nobody
+tunes a predicate toward a verdict.
+
+| +min after T0 (23:29:54Z) | Stage | Actor |
+|---|---|---|
+| 3 | **FINDING**: one H7 case (HTTP listing, state missing `workspace.id`) fails on S0, so it cannot be a hold | Verifier |
+| 4 | **RULING**: that case is flip F4; H7 keeps the other 16. Routed as a blocking `contract-clarification` change; both teammates acknowledge | Task Manager → both |
+| 5 | H2, H3, H4, H6, H7 hold on S0; H6 in-flight-count form 5/5 deterministic on first attempt | Verifier |
+| 6 | reference (PR #19 at `d9c48e9`) passes F1..F4 and H1..H7 | Verifier |
+| 9 | witness matrix, 10/10 caught by the named predicate | Verifier |
+| 10.5 | `LOCKED d6002fb8…`, layout-independent manifest; portability check under `PATH=/usr/bin:/bin` | Verifier |
+| 12 | claude-fable-5-1 run: 189 s, 21 turns, 486-line diff | Executor |
+| 16 | `VERDICT PASS` | Verifier |
+| 21 | gpt-5.6-sol run: 309 s, 242-line diff | Executor |
+| 23 | `VERDICT PASS`; classification; problem resolved | Verifier, Task Manager |
+
+What instance 2 established, in order of weight:
+
+- **Lineage discriminates.** Both instance-1 PASS diffs, as witnesses S-g and S-h,
+  fail H6 (five consecutive runs, five failures), H7 and F4. The strengthened
+  contract rejects exactly the behaviour instance 1 accepted.
+- **H6 is a real hold, not an idea.** Decided by the fake transport's in-flight
+  count with no wall-clock assertion; stable across S0, reference, S-g and S-i. The
+  timeout-lowering cheat (S-i) is rejected because requests still never overlap.
+- **A spec defect was found and ruled before the lock, through the hub.** The
+  Verifier's finding, the Task Manager's ruling, and both acknowledgements are on
+  the ledger as a contract change with impacts, not as chat.
+- **Fresh solvers pass when the requirement is stated.** No FAIL was manufactured
+  and none occurred; the discriminating evidence is the witness matrix. Same result
+  as the synthetic task's instance 2.
+- **The evaluator is portable and its lock reproduces after publishing**:
+  `instance-2/evaluator-i2/make-manifest.sh | shasum -a 256` equals
+  `instance-2/evaluator-i2/LOCK.sha256` in this repo, no path mapping needed.
+
+Reproduce (same worktree recipe as above):
+
+```sh
+I=$X/instance-2/evaluator-i2
+(cd $X/instance-2 && $I/make-manifest.sh | shasum -a 256 | cut -c1-64; cat $I/LOCK.sha256)   # equal
+GRADE_OUT=/tmp/hub18-grading-i2 $I/grade.sh /tmp/s0 S0
+GRADE_OUT=/tmp/hub18-grading-i2 $I/grade.sh /tmp/s0 reference $I/reference.patch
+GRADE_OUT=/tmp/hub18-grading-i2 $I/grade.sh /tmp/s0 S-g $I/witnesses/S-g-serial-snapshot-loop-claude-run-1.patch   # H6, H7, F4 FAIL
+GRADE_OUT=/tmp/hub18-grading-i2 $I/grade.sh /tmp/s0 claude $X/instance-2/runs/claude-run-1/diff.patch
+```
+
+Files: `instance-2/{RUN-PLAN,brief-verifier,brief-executor}.md`, `instance-2/evaluator-i2/`
+(tests incl. F4, H6, H7; ten witnesses; `matrix.md`; lock), `instance-2/runs/`,
+`instance-2/ledger.json` (40 events, seq 64..103).
+
+**Known evaluator gap, found in review after the lock (both instances).** H5's
+locked-file list (67 files) was built from `src/**/__tests__/**` and omits
+`src/celld/integration/celld-gauntlet.test.ts`, which is an existing test file at S0
+but lives outside that glob and outside vitest's default include. A candidate that
+edited it would violate constraint C without H1 or H5 noticing. The locked lists are
+not edited (both locks stand as signed); instead the gap is closed by inspection for
+every graded diff, and instance 3 must lock every tracked `*.test.ts`:
+
+```sh
+for p in runs/*/diff.patch instance-2/runs/*/diff.patch; do printf '%s ' "$p"; grep -c 'src/celld/integration' "$p" || true; done
+# every count is 0: no graded diff touched the unlocked test
+```
+
 Note that this folder publishes the hidden evaluator and the reference fix, so #18 at
 `c182dce` is no longer usable as a hidden-grader task. That is deliberate: the
 artifact exists to show the method.

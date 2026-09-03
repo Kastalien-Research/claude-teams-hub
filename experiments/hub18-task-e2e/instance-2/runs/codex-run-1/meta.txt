@@ -1,0 +1,16 @@
+run=codex-run-1
+worktree=/Users/b.c.nims/dev/employment-ops-home/mechanize/hub18/executor-s0
+s0=c182dce
+agent=codex
+model=gpt-5.6-sol (reasoning high, from CODEX_HOME config.toml)
+codex_version=codex-cli 0.144.6
+codex_home=/Users/b.c.nims/dev/employment-ops-home/mechanize/invariant-task/.codex-home
+sandbox=workspace-write
+lock=d6002fb8da335efd3920bab0057e625643445df4189cc40a2ac78029e0ab6ea9
+prompt_sha256=64691be17dff444b69abfa5937618d9a42aac3540286d8cee2c5d1b6ad4d3479
+budget_s=2700
+start=2026-09-02T23:45:59Z
+end=2026-09-02T23:51:16Z
+exit_code=0
+launch=2026-09-02T23:46:07Z
+turns=1 (turn.completed; 16 command_execution items, 49 item.completed events)

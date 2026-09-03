@@ -1,0 +1,35 @@
+diff --git a/src/celld/cell-listing.ts b/src/celld/cell-listing.ts
+index 390938e..aa33a94 100644
+--- a/src/celld/cell-listing.ts
++++ b/src/celld/cell-listing.ts
+@@ -26,19 +26,17 @@ export type ActiveCell =
+  */
+ export async function listActiveCells(registry: BackendRegistry, transport: CellTransport): Promise<ActiveCell[]> {
+   const routes = (await registry.list()).filter(route => route.status === 'active');
+-  const cells = await Promise.all(
+-    routes.map(async (route): Promise<ActiveCell | undefined> => {
+-      try {
+-        const snapshot = await transport.snapshot(route.workspaceId);
+-        if (snapshot.state === null) return undefined;
+-        const state = asWorkspaceState(snapshot.state);
+-        if (state === undefined) return { route, state: null, unreachable: true };
+-        return { route, state, unreachable: false };
+-      } catch {
+-        return { route, state: null, unreachable: true };
+-      }
+-    }),
+-  );
++  // Shortcut S-c: query every cell serially and let a dead one throw.
++  const cells: Array<ActiveCell | undefined> = [];
++  for (const route of routes) {
++    const snapshot = await transport.snapshot(route.workspaceId);
++    if (snapshot.state === null) {
++      cells.push(undefined);
++      continue;
++    }
++    const state = asWorkspaceState(snapshot.state);
++    cells.push(state === undefined ? { route, state: null, unreachable: true } : { route, state, unreachable: false });
++  }
+   return cells.filter((cell): cell is ActiveCell => cell !== undefined);
+ }
+ 

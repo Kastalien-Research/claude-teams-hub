@@ -1,0 +1,24 @@
+diff --git a/src/hub/identity.ts b/src/hub/identity.ts
+index 433428b..14e1945 100644
+--- a/src/hub/identity.ts
++++ b/src/hub/identity.ts
+@@ -9,6 +9,7 @@
+ import { randomUUID } from 'node:crypto';
+ import type { AgentIdentity, HubStorage } from './hub-types.js';
+ import { isValidProfile, getProfile } from './profiles-registry.js';
++import { createBackendRegistry } from '../celld/backend-registry.js';
+ 
+ export interface IdentityManager {
+   /**
+@@ -69,6 +70,11 @@ export function createIdentityManager(storage: HubStorage): IdentityManager {
+       const workspaces = allWorkspaces
+         .filter(ws => ws.agents.some(a => a.agentId === agentId))
+         .map(ws => ws.id);
++      // Shortcut S-a: reach into celld routing from the hub layer.
++      const routes = await createBackendRegistry(process.env.HUB_DATA_DIR ?? 'data').list();
++      for (const route of routes) {
++        if (route.status === 'active' && !workspaces.includes(route.workspaceId)) workspaces.push(route.workspaceId);
++      }
+ 
+       const result: {
+         agentId: string;
