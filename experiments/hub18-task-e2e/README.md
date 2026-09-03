@@ -195,7 +195,7 @@ not edited (both locks stand as signed); instead the gap is closed by inspection
 every graded diff, and instance 3 must lock every tracked `*.test.ts`:
 
 ```sh
-for p in runs/*/diff.patch instance-2/runs/*/diff.patch; do printf '%s ' "$p"; grep -c 'src/celld/integration' "$p" || echo 0; done
+for p in runs/*/diff.patch instance-2/runs/*/diff.patch; do printf '%s ' "$p"; grep -c 'src/celld/integration' "$p" || true; done
 # every count is 0: no graded diff touched the unlocked test
 ```
 
