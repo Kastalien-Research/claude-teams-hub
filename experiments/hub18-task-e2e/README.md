@@ -186,6 +186,19 @@ Files: `instance-2/{RUN-PLAN,brief-verifier,brief-executor}.md`, `instance-2/eva
 (tests incl. F4, H6, H7; ten witnesses; `matrix.md`; lock), `instance-2/runs/`,
 `instance-2/ledger.json` (40 events, seq 64..103).
 
+**Known evaluator gap, found in review after the lock (both instances).** H5's
+locked-file list (67 files) was built from `src/**/__tests__/**` and omits
+`src/celld/integration/celld-gauntlet.test.ts`, which is an existing test file at S0
+but lives outside that glob and outside vitest's default include. A candidate that
+edited it would violate constraint C without H1 or H5 noticing. The locked lists are
+not edited (both locks stand as signed); instead the gap is closed by inspection for
+every graded diff, and instance 3 must lock every tracked `*.test.ts`:
+
+```sh
+for p in runs/*/diff.patch instance-2/runs/*/diff.patch; do printf '%s ' "$p"; grep -c 'src/celld/integration' "$p" || echo 0; done
+# every count is 0: no graded diff touched the unlocked test
+```
+
 Note that this folder publishes the hidden evaluator and the reference fix, so #18 at
 `c182dce` is no longer usable as a hidden-grader task. That is deliberate: the
 artifact exists to show the method.
